@@ -121,6 +121,7 @@ def main():
                 "종목코드": code,
                 "종목명": name,
                 "거래대금(억)": last_turnover,
+                "시장": stock['market'], # KOSPI 또는 KOSDAQ
                 "현재가": df["Close"].iloc[-1]
             })
         
