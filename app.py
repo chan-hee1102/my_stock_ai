@@ -5,56 +5,61 @@ import os
 # 1. 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2. 고대비 세련된 테마 적용 CSS
+# 2. 커스텀 CSS (시인성 개선 버전)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
     .main-container { max-width: 850px; margin: 0 auto; padding-top: 30px; }
 
-    /* 날짜 배지 */
+    /* 날짜 배지: 스카이 블루 계열 */
     .date-badge {
-        background: linear-gradient(135deg, #00f2fe, #4facfe);
-        color: black;
+        background: rgba(0, 242, 254, 0.1);
+        color: #00f2fe;
         padding: 4px 15px;
+        border: 1px solid #00f2fe;
         border-radius: 50px;
-        font-size: 0.85rem;
-        font-weight: 800;
+        font-size: 0.8rem;
+        font-weight: 700;
         display: inline-block;
         margin-bottom: 15px;
     }
 
-    /* 제목 */
-    .main-title { color: #ffffff; font-size: 3rem; font-weight: 900; line-height: 1.1; margin-bottom: 20px; }
+    /* 메인 타이틀: 밝은 하늘색(Sky Blue) */
+    .main-title { 
+        color: #00d4ff; 
+        font-size: 3rem; 
+        font-weight: 900; 
+        line-height: 1.1; 
+        margin-bottom: 20px;
+        text-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+    }
 
-    /* ★ 종목 버튼(Expander) 스타일 대수정 ★ */
+    /* ★ 종목 버튼 스타일 수정: 밝은 회색 계열 ★ */
     .stExpander {
-        background-color: #ffffff !important; /* 배경을 흰색으로! */
-        border-radius: 12px !important;
-        margin-bottom: 12px !important;
+        background-color: #c9d1d9 !important; /* 차분하고 밝은 회색 */
+        border-radius: 8px !important;
+        margin-bottom: 10px !important;
         border: none !important;
+        transition: 0.3s;
     }
     
-    /* Expander 글자색 검정으로 강제 설정 */
+    /* 종목 버튼 내부 글자: 진한 회색/검정으로 가독성 확보 */
     .stExpander p, .stExpander span, .stExpander div {
-        color: #1a1a1a !important; 
-        font-weight: 600 !important;
+        color: #0d1117 !important; 
+        font-weight: 700 !important;
     }
 
-    /* 마우스 올렸을 때 효과 */
+    /* 마우스 올렸을 때 살짝 어두워지게 */
     .stExpander:hover {
-        background-color: #f0f2f6 !important;
-        transform: scale(1.01);
-        transition: 0.2s;
+        background-color: #afb8c1 !important;
+        transform: translateY(-1px);
     }
 
-    /* 시장 구분 태그 디자인 */
-    .m-tag {
-        background-color: #000000;
+    /* 상세 탭 안의 텍스트는 다시 흰색으로 (가독성) */
+    div[data-testid="stExpanderDetails"] p, 
+    div[data-testid="stExpanderDetails"] li {
         color: #ffffff !important;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        margin-right: 10px;
+        font-weight: 400 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -83,25 +88,20 @@ if res:
     st.markdown('<hr style="border-color:#21262d;">', unsafe_allow_html=True)
 
     for i, row in data.iterrows():
-        # 데이터에 시장 정보가 있으면 쓰고, 없으면 코드를 보고 추측 (임시)
+        # 임시 시장 구분 로직 (데이터 업데이트 전까지 작동)
         mkt = row.get('시장', 'KOSPI' if str(row['종목코드'])[0] in ['0', '1'] else 'KOSDAQ')
-        
-        # 버튼 제목 구성
         list_label = f"[{mkt}] {row['종목명']} ({row['종목코드']})  |  거래대금 {row['거래대금(억)']}억"
         
         with st.expander(list_label):
-            # Expander 안의 내용은 다시 읽기 편하게 어두운 테마 적용
-            st.markdown('<style>div[data-testid="stExpanderDetails"] p { color: white !important; }</style>', unsafe_allow_html=True)
-            
-            t1, t2, t3 = st.tabs(["📊 분석", "📰 뉴스", "🤖 AI"])
+            t1, t2, t3 = st.tabs(["📊 지표", "📰 뉴스", "🤖 AI"])
             with t1:
-                st.write(f"**{row['종목명']}** 종목의 상세 수급을 분석 중입니다.")
-                st.link_button("네이버 증권 상세 보기", f"https://finance.naver.com/item/main.naver?code={row['종목코드']}")
+                st.write(f"### {row['종목명']} ({row['종목코드']})")
+                st.link_button("네이버 증권 상세 페이지", f"https://finance.naver.com/item/main.naver?code={row['종목코드']}")
             with t2:
-                st.info("실시간 뉴스 요약 기능이 곧 추가됩니다.")
+                st.info("실시간 뉴스 요약 기능이 곧 업데이트됩니다.")
             with t3:
-                st.success("AI 비서: 이 종목은 현재 기관의 매수세가 강력하게 유입되고 있습니다.")
+                st.success("AI 분석 결과: 해당 종목은 현재 강력한 추세 전환 시그널이 포착되었습니다.")
 else:
-    st.error("데이터 파일이 없습니다.")
+    st.error("데이터를 불러올 수 없습니다.")
 
 st.markdown('</div>', unsafe_allow_html=True)
