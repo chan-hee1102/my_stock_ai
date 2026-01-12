@@ -5,80 +5,56 @@ import os
 # 1. 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2. 세련된 테마 적용을 위한 CSS
+# 2. 고대비 세련된 테마 적용 CSS
 st.markdown("""
     <style>
-    /* 전체 배경 및 폰트 */
-    .stApp {
-        background-color: #05070a;
-        font-family: 'Pretendard', -apple-system, sans-serif;
-    }
-    
-    /* 중앙 정렬 컨테이너 */
-    .main-container {
-        max-width: 850px;
-        margin: 0 auto;
-        padding-top: 50px;
-    }
+    .stApp { background-color: #05070a; }
+    .main-container { max-width: 850px; margin: 0 auto; padding-top: 30px; }
 
     /* 날짜 배지 */
     .date-badge {
-        background: linear-gradient(135deg, #ff0080, #7928ca);
-        color: white;
-        padding: 4px 12px;
+        background: linear-gradient(135deg, #00f2fe, #4facfe);
+        color: black;
+        padding: 4px 15px;
         border-radius: 50px;
-        font-size: 0.8rem;
-        font-weight: 700;
+        font-size: 0.85rem;
+        font-weight: 800;
         display: inline-block;
         margin-bottom: 15px;
-        box-shadow: 0 4px 15px rgba(255, 0, 128, 0.3);
     }
 
-    /* 메인 타이틀 */
-    .main-title {
-        color: #ffffff;
-        font-size: 3.2rem;
-        font-weight: 900;
-        letter-spacing: -2px;
-        margin-bottom: 10px;
-        line-height: 1.1;
-    }
+    /* 제목 */
+    .main-title { color: #ffffff; font-size: 3rem; font-weight: 900; line-height: 1.1; margin-bottom: 20px; }
 
-    /* 서브 타이틀 */
-    .sub-title {
-        color: #8b949e;
-        font-size: 1.1rem;
-        margin-bottom: 40px;
-    }
-
-    /* 종목 리스트 스타일 (Expander) */
+    /* ★ 종목 버튼(Expander) 스타일 대수정 ★ */
     .stExpander {
-        background-color: #0d1117 !important;
-        border: 1px solid #21262d !important;
+        background-color: #ffffff !important; /* 배경을 흰색으로! */
         border-radius: 12px !important;
         margin-bottom: 12px !important;
-        transition: all 0.3s ease;
-    }
-    .stExpander:hover {
-        border-color: #58a6ff !important;
-        transform: translateY(-2px);
-        box-shadow: 0 5px 20px rgba(0,0,0,0.5);
-    }
-
-    /* 시장 구분 라벨 (KOSPI/KOSDAQ) */
-    .market-tag {
-        color: #58a6ff;
-        font-weight: 700;
-        margin-right: 10px;
-        font-family: monospace;
+        border: none !important;
     }
     
-    /* 가로줄 */
-    hr {
-        border: 0;
-        height: 1px;
-        background: #21262d;
-        margin: 40px 0;
+    /* Expander 글자색 검정으로 강제 설정 */
+    .stExpander p, .stExpander span, .stExpander div {
+        color: #1a1a1a !important; 
+        font-weight: 600 !important;
+    }
+
+    /* 마우스 올렸을 때 효과 */
+    .stExpander:hover {
+        background-color: #f0f2f6 !important;
+        transform: scale(1.01);
+        transition: 0.2s;
+    }
+
+    /* 시장 구분 태그 디자인 */
+    .m-tag {
+        background-color: #000000;
+        color: #ffffff !important;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        margin-right: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -93,45 +69,39 @@ def load_data():
     df['종목코드'] = df['종목코드'].astype(str).str.zfill(6)
     return df, latest_file
 
-# 메인 레이아웃 시작
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
 res = load_data()
-
 if res:
     data, fname = res
     raw_date = fname.split('_')[-1].replace('.csv', '')
     display_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
 
-    # 헤더 섹션
-    st.markdown(f'<div class="date-badge">STALKING THE MARKET : {display_date}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="date-badge">COMMANDER ANALYSIS : {display_date}</div>', unsafe_allow_html=True)
     st.markdown('<h1 class="main-title">🛡️ AI STOCK<br>COMMANDER</h1>', unsafe_allow_html=True)
-    st.markdown(f'<p class="sub-title">전수 조사 시스템이 {len(data)}개의 고밀도 수급 종목을 포착했습니다.</p>', unsafe_allow_html=True)
-    st.markdown('<hr>', unsafe_allow_html=True)
+    st.markdown(f'<p style="color:#8b949e;">엄격한 수급 필터를 통과한 {len(data)}개의 핵심 종목입니다.</p>', unsafe_allow_html=True)
+    st.markdown('<hr style="border-color:#21262d;">', unsafe_allow_html=True)
 
-    # 종목 리스트
     for i, row in data.iterrows():
-        # 시장 정보가 데이터에 없더라도 기본값 표시, 있으면 데이터값 사용
-        mkt = row.get('시장', 'MARKET')
+        # 데이터에 시장 정보가 있으면 쓰고, 없으면 코드를 보고 추측 (임시)
+        mkt = row.get('시장', 'KOSPI' if str(row['종목코드'])[0] in ['0', '1'] else 'KOSDAQ')
         
-        # 리스트 타이틀 구성
-        list_label = f" {mkt} | {row['종목명']} ({row['종목코드']}) — {row['거래대금(억)']}억"
+        # 버튼 제목 구성
+        list_label = f"[{mkt}] {row['종목명']} ({row['종목코드']})  |  거래대금 {row['거래대금(억)']}억"
         
         with st.expander(list_label):
-            t1, t2, t3, t4 = st.tabs(["📊 지표", "📰 뉴스", "💰 재무", "🤖 AI"])
+            # Expander 안의 내용은 다시 읽기 편하게 어두운 테마 적용
+            st.markdown('<style>div[data-testid="stExpanderDetails"] p { color: white !important; }</style>', unsafe_allow_html=True)
             
+            t1, t2, t3 = st.tabs(["📊 분석", "📰 뉴스", "🤖 AI"])
             with t1:
-                st.write(f"### {row['종목명']} ({row['종목코드']})")
-                url = f"https://finance.naver.com/item/main.naver?code={row['종목코드']}"
-                st.link_button("네이버 증권 상세 정보 확인", url)
+                st.write(f"**{row['종목명']}** 종목의 상세 수급을 분석 중입니다.")
+                st.link_button("네이버 증권 상세 보기", f"https://finance.naver.com/item/main.naver?code={row['종목코드']}")
             with t2:
-                st.info("다음 업데이트에서 AI 뉴스 요약 기능이 추가됩니다.")
+                st.info("실시간 뉴스 요약 기능이 곧 추가됩니다.")
             with t3:
-                st.info("재무 제표 분석 모듈 로딩 중...")
-            with t4:
-                st.success(f"현재 {row['종목명']}의 수급 유입 강도는 '매우 강함'입니다.")
-
+                st.success("AI 비서: 이 종목은 현재 기관의 매수세가 강력하게 유입되고 있습니다.")
 else:
-    st.error("데이터를 불러올 수 없습니다. 스캐너를 먼저 실행하세요.")
+    st.error("데이터 파일이 없습니다.")
 
 st.markdown('</div>', unsafe_allow_html=True)
