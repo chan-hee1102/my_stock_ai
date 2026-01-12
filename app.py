@@ -5,17 +5,17 @@ import os
 # 1. 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2. 스타일 및 가독성 긴급 수리 CSS
+# 2. 통합 CSS (디자인 복구 및 가독성 최적화)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
     
-    /* 날짜 배지 복구 */
+    /* 날짜 배지 디자인 */
     .date-badge {
         background: rgba(0, 229, 255, 0.1);
-        color: #00d4ff;
-        padding: 6px 16px;
-        border: 1.5px solid #00d4ff;
+        color: #00e5ff;
+        padding: 5px 15px;
+        border: 1px solid #00e5ff;
         border-radius: 50px;
         font-size: 0.85rem;
         font-weight: 800;
@@ -23,49 +23,50 @@ st.markdown("""
         margin-bottom: 10px;
     }
 
-    /* 메인 타이틀: 선명한 하늘색 */
+    /* 메인 타이틀 */
     .main-title { 
         color: #00e5ff !important; 
-        font-size: 2.8rem; 
+        font-size: 2.5rem; 
         font-weight: 900; 
         margin-bottom: 20px;
         text-shadow: 0 0 20px rgba(0, 229, 255, 0.4);
     }
     
-    /* ★ 왼쪽 종목 버튼 수리 ★ 
-       길이를 중앙까지 늘리고 모든 버튼의 시작 위치를 일치시킴 */
-    .stButton > button {
+    /* ★ 왼쪽 종목 버튼: 모든 버튼의 길이와 시작점을 통일 ★ */
+    div[data-testid="column"] > div:first-child button {
         width: 100% !important;
-        min-width: 450px; /* 길이를 더 늘림 */
         background-color: #1a1d23 !important;
         color: #ffffff !important;
         border: 1px solid #30363d !important;
         border-radius: 6px;
-        padding: 14px 22px;
+        padding: 14px 20px;
         text-align: left;
-        display: block;
-        margin: 0 auto 10px 0; /* 왼쪽 정렬 강제 */
-        transition: 0.2s;
+        display: flex;
+        justify-content: flex-start;
+        margin-bottom: 10px;
     }
-    .stButton > button:hover {
+    
+    div[data-testid="column"] > div:first-child button:hover {
         border-color: #00e5ff !important;
         background-color: #21262d !important;
     }
 
-    /* ★ 채팅창 가독성 개선 ★ */
-    div[data-testid="stChatMessage"] {
-        background-color: #1e2329 !important; /* 밝은 회색으로 변경 */
+    /* ★ 채팅창 가독성: 배경 회색, 글자 흰색 ★ */
+    [data-testid="stChatMessage"] {
+        background-color: #262730 !important; /* 차분한 회색 */
         border-radius: 10px;
+        padding: 15px;
         margin-bottom: 10px;
     }
-    div[data-testid="stChatMessage"] p {
-        color: #ffffff !important; /* 글씨 선명하게 */
+    [data-testid="stChatMessage"] p {
+        color: #ffffff !important;
         font-size: 1rem;
+        line-height: 1.6;
     }
 
-    /* 채팅 입력창 위치 조절 (너무 아래에 있지 않도록 상단 여백 조절) */
+    /* 채팅 입력창 위치 상향 조정 */
     .stChatInput {
-        padding-bottom: 50px !important;
+        bottom: 30px !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -87,47 +88,47 @@ if res:
     raw_date = fname.split('_')[-1].replace('.csv', '')
     display_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
 
-    # 상단 날짜 및 타이틀
-    st.markdown(f'<div class="date-badge">SYSTEM STATUS: ONLINE | {display_date}</div>', unsafe_allow_html=True)
+    # 1. 상단 날짜 및 제목
+    st.markdown(f'<div class="date-badge">MARKET SCAN DATA: {display_date}</div>', unsafe_allow_html=True)
     st.markdown('<h1 class="main-title">🛡️ AI STOCK COMMANDER</h1>', unsafe_allow_html=True)
 
-    # 세션 상태 초기화
+    # 2. 세션 상태 초기화
     if "messages" not in st.session_state:
-        st.session_state.messages = [{"role": "assistant", "content": "분석 준비가 완료되었습니다. 왼쪽에서 종목을 선택하세요."}]
+        st.session_state.messages = [{"role": "assistant", "content": "명령을 대기 중입니다. 분석할 종목을 선택하세요."}]
 
-    # --- 화면 분할 (왼쪽 5 : 오른쪽 5로 조정하여 버튼 공간 확보) ---
+    # --- 3. 화면 분할 (5:5) ---
     col1, col2 = st.columns([5, 5])
 
-    # --- 왼쪽: 종목 리스트 ---
+    # 왼쪽 종목 리스트
     with col1:
         st.write(f"📂 포착된 종목 ({len(data)})")
-        # 높이를 지정하여 내부 스크롤 생성 (버튼 정렬 유지)
-        with st.container(height=700):
+        with st.container(height=650):
             for i, row in data.iterrows():
                 mkt = row.get('시장', 'KOSPI' if str(row['종목코드'])[0] in ['0', '1'] else 'KOSDAQ')
-                btn_label = f"[{mkt}] {row['종목명']} ({row['종목코드']}) | {row['거래대금(억)']}억"
-                
-                if st.button(btn_label, key=f"btn_{row['종목코드']}"):
-                    briefing = f"🎯 **{row['종목명']}** 분석 리포트:\n\n거래대금 {row['거래대금(억)']}억으로 수급이 집중되었습니다. 현재 AI가 시장 테마와의 연관성을 분석 중입니다."
-                    st.session_state.messages.append({"role": "assistant", "content": briefing})
+                # 버튼 레이블 통일
+                label = f"[{mkt}] {row['종목명']} ({row['종목코드']}) | {row['거래대금(억)']}억"
+                if st.button(label, key=f"btn_{row['종목코드']}"):
+                    brief = f"🎯 **{row['종목명']}** 종목 분석 모드를 활성화합니다.\n- 수급 집중도: {row['거래대금(억)']}억\n- 전략: AI가 실시간 모멘텀을 추적 중입니다."
+                    st.session_state.messages.append({"role": "assistant", "content": brief})
 
-    # --- 오른쪽: AI 채팅 ---
+    # 오른쪽 LLM 채팅창
     with col2:
-        st.markdown("### 💬 Live AI Chat")
-        chat_box = st.container(height=600)
-        with chat_container := chat_box:
+        st.markdown("### 💬 AI Commander Chat")
+        # 오류가 났던 부분을 안전한 방식으로 수정
+        chat_box = st.container(height=580)
+        with chat_box:
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
 
-        # 입력창
-        if prompt := st.chat_input("종목 전략에 대해 질문하세요..."):
+        # 채팅 입력
+        if prompt := st.chat_input("질문을 입력하세요 (예: 이 종목 호재 뭐야?)"):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with chat_container:
+            with chat_box:
                 with st.chat_message("user"):
                     st.markdown(prompt)
                 with st.chat_message("assistant"):
-                    st.markdown("데이터 분석을 시작합니다. (곧 Gemini API가 연결됩니다)")
+                    st.markdown(f"'{prompt}'에 대한 깊이 있는 분석을 Gemini API를 통해 요청하겠습니다.")
 
 else:
-    st.error("데이터를 찾을 수 없습니다.")
+    st.error("데이터 파일을 로드할 수 없습니다.")
