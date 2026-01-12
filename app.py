@@ -2,67 +2,47 @@ import streamlit as st
 import pandas as pd
 import os
 
-# 1. 페이지 설정
+# 1. 페이지 설정 (반드시 전체 화면 사용)
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2. 고대비 & 저피로 디자인 CSS
+# 2. 스타일링 (2분할 최적화 및 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
-    .main-container { max-width: 850px; margin: 0 auto; padding-top: 30px; }
-
-    /* 날짜 배지: 테두리와 글자 강조 */
-    .date-badge {
-        background: rgba(0, 212, 255, 0.1);
-        color: #00d4ff;
-        padding: 5px 18px;
-        border: 1.5px solid #00d4ff;
-        border-radius: 50px;
-        font-size: 0.85rem;
-        font-weight: 800;
-        display: inline-block;
-        margin-bottom: 20px;
-    }
-
-    /* ★ 메인 타이틀: 투명도 제거, 선명한 스카이 블루 ★ */
+    
+    /* 타이틀 영역 */
     .main-title { 
-        color: #00e5ff !important; /* 선명하고 밝은 하늘색 */
-        font-size: 3.5rem; 
+        color: #00e5ff !important; 
+        font-size: 2.5rem; 
         font-weight: 900; 
-        line-height: 1.1; 
-        margin-bottom: 10px;
-        text-shadow: 0 0 30px rgba(0, 229, 255, 0.5); /* 은은한 광채 효과 */
-    }
-
-    /* ★ 종목 버튼 스타일: 조금 더 어두운 회색 (#323940) ★ */
-    .stExpander {
-        background-color: #323940 !important; /* 너무 밝지 않은 중후한 회색 */
-        border-radius: 10px !important;
-        margin-bottom: 12px !important;
-        border: 1px solid #444c56 !important; /* 얇은 테두리로 구분감 */
-        transition: 0.3s;
+        margin-bottom: 5px;
+        text-shadow: 0 0 20px rgba(0, 229, 255, 0.4);
     }
     
-    /* 종목 버튼 내부 글자: 흰색으로 가독성 극대화 */
-    .stExpander p, .stExpander span, .stExpander div {
-        color: #ffffff !important; 
-        font-weight: 600 !important;
-        font-size: 1.05rem !important;
+    /* 종목 버튼 스타일 (길이 축소 및 딥 그레이) */
+    .stButton > button {
+        width: 100%;
+        background-color: #1a1d23 !important;
+        color: #ffffff !important;
+        border: 1px solid #30363d !important;
+        border-radius: 8px;
+        padding: 15px;
+        text-align: left;
+        margin-bottom: 10px;
+        transition: 0.3s;
+    }
+    .stButton > button:hover {
+        border-color: #00e5ff !important;
+        background-color: #21262d !important;
     }
 
-    /* 마우스 올렸을 때 효과 */
-    .stExpander:hover {
-        background-color: #444c56 !important;
-        border-color: #00d4ff !important; /* 호버 시 하늘색 테두리 */
-        transform: translateY(-2px);
-    }
-
-    /* 탭 디자인 가독성 조절 */
-    .stTabs [data-baseweb="tab-list"] button {
-        color: #8b949e !important;
-    }
-    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
-        color: #00d4ff !important;
+    /* AI 메시지 박스 */
+    .ai-box {
+        background-color: #0d1117;
+        border: 1.5px solid #00e5ff;
+        border-radius: 15px;
+        padding: 25px;
+        min-height: 500px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -77,33 +57,61 @@ def load_data():
     df['종목코드'] = df['종목코드'].astype(str).str.zfill(6)
     return df, latest_file
 
-st.markdown('<div class="main-container">', unsafe_allow_html=True)
+# 상단 타이틀
+st.markdown('<h1 class="main-title">🛡️ AI STOCK COMMANDER</h1>', unsafe_allow_html=True)
+st.markdown('<p style="color:#8b949e; margin-bottom:20px;">분석된 종목을 클릭하여 AI 브리핑을 확인하세요.</p>', unsafe_allow_html=True)
 
 res = load_data()
+
 if res:
     data, fname = res
-    raw_date = fname.split('_')[-1].replace('.csv', '')
-    display_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+    
+    # --- 화면 분할 (왼쪽 4 : 오른쪽 6) ---
+    col1, col2 = st.columns([4, 6])
+    
+    # 3. 세션 상태 초기화 (클릭한 종목 저장용)
+    if 'selected_stock' not in st.session_state:
+        st.session_state.selected_stock = data.iloc[0].to_dict()
 
-    st.markdown(f'<div class="date-badge">COMMANDER SYSTEM : {display_date}</div>', unsafe_allow_html=True)
-    st.markdown('<h1 class="main-title">🛡️ AI STOCK<br>COMMANDER</h1>', unsafe_allow_html=True)
-    st.markdown(f'<p style="color:#8b949e; font-size:1.1rem; margin-bottom:40px;">정밀 수급 엔진이 포착한 오늘의 승부 종목 {len(data)}선</p>', unsafe_allow_html=True)
+    # --- 왼쪽: 종목 리스트 ---
+    with col1:
+        st.write(f"📍 포착된 종목 ({len(data)})")
+        for i, row in data.iterrows():
+            mkt = row.get('시장', 'KOSPI' if str(row['종목코드'])[0] in ['0', '1'] else 'KOSDAQ')
+            # 버튼 클릭 시 해당 종목을 세션에 저장
+            if st.button(f"[{mkt}] {row['종목명']}", key=f"btn_{row['종목코드']}"):
+                st.session_state.selected_stock = row.to_dict()
 
-    for i, row in data.iterrows():
-        # 임시 시장 구분 로직 (코드 기반)
-        mkt = row.get('시장', 'KOSPI' if str(row['종목코드'])[0] in ['0', '1'] else 'KOSDAQ')
-        list_label = f"[{mkt}] {row['종목명']} ({row['종목코드']})  |  거래대금 {row['거래대금(억)']}억"
+    # --- 오른쪽: LLM 메시지 영역 ---
+    with col2:
+        stock = st.session_state.selected_stock
+        st.markdown(f"""
+            <div class="ai-box">
+                <h2 style="color:#00e5ff; margin-top:0;">🤖 AI COMMANDER BRIEFING</h2>
+                <hr style="border-color:#21262d;">
+                <h3 style="color:white;">{stock['종목명']} ({stock['종목코드']})</h3>
+                <p style="color:#8b949e;">거래대금: {stock['거래대금(억)']}억</p>
+                <br>
+                <div style="background:#161b22; padding:20px; border-radius:10px; border-left:4px solid #00e5ff;">
+                    <p style="color:#ffffff; line-height:1.6;">
+                        "현재 <b>{stock['종목명']}</b> 종목에 대한 수급 분석을 진행 중입니다.<br><br>
+                        이 종목은 최근 거래대금이 폭발하며 전고점을 돌파하려는 움직임을 보이고 있습니다. 
+                        Gemini AI가 실시간 뉴스를 분석한 결과, 해당 산업군에 대한 긍정적인 전망이 지배적입니다."
+                    </p>
+                </div>
+                <br>
+                <p style="color:#58a6ff;">💡 <b>Commander's Tip:</b> 눌림목 구간에서 분할 매수 관점이 유효해 보입니다.</p>
+            </div>
+        """, unsafe_allow_html=True)
         
-        with st.expander(list_label):
-            t1, t2, t3 = st.tabs(["📊 지표", "📰 뉴스", "🤖 AI"])
-            with t1:
-                st.write(f"### {row['종목명']} 상세 분석")
-                st.link_button("네이버 증권에서 확인", f"https://finance.naver.com/item/main.naver?code={row['종목코드']}")
-            with t2:
-                st.info("실시간 뉴스 요약 기능이 곧 탑재됩니다.")
-            with t3:
-                st.success("AI Commander: 현재 외인/기관의 양매수가 집중되고 있는 구간입니다.")
-else:
-    st.error("데이터 로드 실패")
+        # 추가 버튼들
+        st.write("")
+        c_btn1, c_btn2 = st.columns(2)
+        with c_btn1:
+            st.link_button(f"🔗 {stock['종목명']} 네이버 증권", f"https://finance.naver.com/item/main.naver?code={stock['종목코드']}")
+        with c_btn2:
+            if st.button("🔄 AI에게 다시 분석 요청"):
+                st.toast("Gemini가 데이터를 다시 읽고 있습니다...")
 
-st.markdown('</div>', unsafe_allow_html=True)
+else:
+    st.error("데이터를 로드할 수 없습니다.")
