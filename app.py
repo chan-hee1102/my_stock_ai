@@ -7,15 +7,18 @@ import google.generativeai as genai
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
 # 2. Gemini AI 엔진 연결 (Secrets에서 키 가져오기)
+# 기존 모델 설정 코드를 지우고 아래 내용으로 교체하세요
 try:
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # 대화형 모델 설정
-        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+        
+        # 모델명 앞에 'models/'를 붙이지 않고 가장 표준적인 이름만 사용합니다.
+        # 404 에러 방지를 위해 명시적으로 이름을 지정합니다.
+        model = genai.GenerativeModel('gemini-1.5-flash')
     else:
-        st.error("API 키를 찾을 수 없습니다. Streamlit Cloud의 Settings나 secrets.toml을 확인하세요.")
+        st.error("API 키를 찾을 수 없습니다.")
 except Exception as e:
-    st.error(f"AI 연결 중 오류 발생: {e}")
+    st.error(f"AI 엔진 초기화 에러: {e}")
 
 # --- CSS 디자인 (가독성 개선 버전) ---
 st.markdown("""
