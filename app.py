@@ -11,7 +11,7 @@ try:
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         # 대화형 모델 설정
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
     else:
         st.error("API 키를 찾을 수 없습니다. Streamlit Cloud의 Settings나 secrets.toml을 확인하세요.")
 except Exception as e:
