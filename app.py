@@ -8,17 +8,17 @@ from bs4 import BeautifulSoup
 # 1. 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2. Gemini AI 설정 (NotFound 에러 해결을 위해 모델명 고정)
+# 2. Gemini AI 설정 - NotFound 에러를 방지하는 가장 보수적인 호출 방식
 if "GEMINI_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # 가장 안정적인 모델명으로 호출 방식을 통일합니다.
+        # 모델 이름을 명시적 문자열로 전달 (가장 오류가 적은 방식)
         model = genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        st.error(f"AI 엔진 오류: {e}")
+        st.error(f"AI 엔진 초기화 실패: {e}")
         model = None
 else:
-    st.warning("API 키를 확인해주세요.")
+    st.warning("API 키가 없습니다. Streamlit Secrets를 확인하세요.")
     model = None
 
 # 뉴스 크롤링 함수
@@ -35,30 +35,42 @@ def get_news(stock_name):
         news_data = "뉴스를 가져오지 못했습니다."
     return news_data
 
-# 3. 디자인 CSS (요청하신 색상 반영)
+# 3. 디자인 CSS (채팅창 전체 배경색 수정 포함)
 st.markdown("""
     <style>
+    /* 전체 배경 */
     .stApp { background-color: #05070a; }
+    
+    /* 섹션 헤더 */
     .section-header { color: #ffffff; font-size: 1.1rem; font-weight: 700; margin-bottom: 15px; border-left: 4px solid #00e5ff; padding-left: 10px; }
     
-    /* 중앙/왼쪽 박스 배경색 (#1c2128) */
-    .terminal-box { background-color: #1c2128; border: 1px solid #30363d; border-radius: 12px; padding: 25px; height: 700px; overflow-y: auto; }
+    /* 왼쪽/가운데 박스 배경 (#1c2128) */
+    .terminal-box, .stock-list-container { 
+        background-color: #1c2128; 
+        border: 1px solid #30363d; 
+        border-radius: 12px; 
+        padding: 20px; 
+    }
     
-    /* 왼쪽 종목 버튼 배경색을 중앙 박스와 통일 */
+    /* [요청] 노란 박스(채팅창 전체 영역) 배경색 수정 (#161b22) */
+    /* 웹페이지 배경(#05070a)보다 밝게 하여 영역을 구분합니다. */
+    [data-testid="stVerticalBlockBorderWrapper"] > div:has(div[data-testid="stChatMessage"]) {
+        background-color: #161b22 !important;
+        border: 1px solid #30363d !important;
+        border-radius: 12px !important;
+        padding: 10px !important;
+    }
+    
+    /* 채팅 메시지 말풍선 배경 (#2d333b) */
+    [data-testid="stChatMessage"] { background-color: #2d333b !important; border-radius: 10px; margin-bottom: 10px; }
+    
+    /* 왼쪽 종목 버튼 스타일 */
     .stButton > button { 
         width: 100%; background-color: #1c2128; color: #ffffff; 
-        border: 1px solid #30363d; margin-bottom: 8px; text-align: left; padding: 12px;
+        border: 1px solid #30363d; border-radius: 6px; padding: 12px; 
+        margin-bottom: 8px; text-align: left;
     }
-    .stButton > button:hover { border-color: #00e5ff; background-color: #2d333b; }
-    
-    /* 채팅 메시지 배경색을 더 밝게 수정하여 구분감 확보 (#3a414a) */
-    [data-testid="stChatMessage"] { 
-        background-color: #3a414a !important; 
-        border-radius: 10px; 
-        margin-bottom: 12px; 
-        border: 1px solid #4e5763;
-    }
-    [data-testid="stChatMessage"] p { color: #ffffff !important; }
+    .stButton > button:hover { border-color: #00e5ff; background-color: #262c36; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -76,7 +88,6 @@ def load_data():
 data = load_data()
 
 if data is not None:
-    # 세션 관리 (종목 선택 및 채팅 기록 저장)
     if "selected_stock" not in st.session_state:
         st.session_state.selected_stock = data.iloc[0].to_dict()
     if "messages" not in st.session_state:
@@ -84,11 +95,11 @@ if data is not None:
 
     col1, col2, col3 = st.columns([2.2, 4.5, 3.3])
 
-    with col1: # 왼쪽: 종목 리스트 (번호 추가 및 배경색 수정)
+    with col1: # 왼쪽: 종목 리스트 (번호 추가)
         st.markdown('<div class="section-header">📂 포착된 종목</div>', unsafe_allow_html=True)
         with st.container(height=700):
             for i, row in data.iterrows():
-                # 순번(i+1)을 제목에 포함
+                # i+1 로 번호 표시
                 if st.button(f"{i+1}. {row['종목명']} | {row['거래대금(억)']}억", key=f"btn_{row['종목코드']}"):
                     st.session_state.selected_stock = row.to_dict()
                     st.rerun()
@@ -98,42 +109,46 @@ if data is not None:
         st.markdown(f'<div class="section-header">📊 {stock["종목명"]} 분석</div>', unsafe_allow_html=True)
         news_text = get_news(stock['종목명'])
         st.markdown(f"""
-            <div class="terminal-box">
-                <h1 style="color:#00e5ff;">{stock['종목명']}</h1>
-                <p style="color:#8b949e;">종목코드: {stock['종목코드']} | 거래대금: {stock['거래대금(억)']}억</p>
+            <div class="terminal-box" style="height:700px;">
+                <h1 style="color:#00e5ff; margin-bottom:5px;">{stock['종목명']}</h1>
+                <p style="color:#8b949e;">코드: {stock['종목코드']} | 거래대금: {stock['거래대금(억)']}억</p>
                 <hr style="border-color:#333;">
                 <h4 style="color:#ffffff;">📰 최신 뉴스 요약</h4>
                 <div style="color:#ced4da; font-size:0.95rem; line-height:1.6;">{news_text.replace("- ", "• ")}</div>
             </div>
         """, unsafe_allow_html=True)
 
-    with col3: # 오른쪽: AI 채팅 (배경색 가독성 개선)
+    with col3: # 오른쪽: AI 채팅 (영역 배경 구분)
         st.markdown('<div class="section-header">💬 AI Commander</div>', unsafe_allow_html=True)
-        chat_container = st.container(height=600)
         
-        # 기존 대화 내용 표시
-        for message in st.session_state.messages:
-            with chat_container.chat_message(message["role"]):
-                st.markdown(message["content"])
+        # 채팅창 영역 배경을 위해 컨테이너 사용
+        chat_box = st.container(height=600)
+        with chat_box:
+            for m in st.session_state.messages:
+                with st.chat_message(m["role"]):
+                    st.markdown(m["content"])
 
-        # 사용자 입력 처리
-        if prompt := st.chat_input("질문을 입력하세요..."):
+        if prompt := st.chat_input("질문하세요..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with chat_container.chat_message("user"):
-                st.markdown(prompt)
+            with chat_box:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
             if model:
                 try:
-                    with chat_container.chat_message("assistant"):
-                        with st.spinner("커맨더 분석 중..."):
-                            cur = st.session_state.selected_stock
-                            news = get_news(cur['종목명'])
-                            context = f"주식 전문가야. {cur['종목명']}({cur['거래대금(억)']}억) 분석 중. 뉴스: {news}"
-                            response = model.generate_content(f"{context}\n질문: {prompt}")
-                            st.markdown(response.text)
-                            st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    with chat_box:
+                        with st.chat_message("assistant"):
+                            with st.spinner("분석 중..."):
+                                cur = st.session_state.selected_stock
+                                news = get_news(cur['종목명'])
+                                ctx = f"너는 주식 전문가야. {cur['종목명']} 분석 중. 뉴스: {news}"
+                                # model.generate_content 직접 호출
+                                response = model.generate_content(f"{ctx}\n질문: {prompt}")
+                                res_text = response.text
+                                st.markdown(res_text)
+                                st.session_state.messages.append({"role": "assistant", "content": res_text})
                 except Exception as e:
-                    st.error(f"AI 답변 생성 실패: {e}")
+                    st.error(f"AI 응답 에러: {e}. API 키 권한이나 모델명을 확인하세요.")
             st.rerun()
 else:
     st.error("데이터를 찾을 수 없습니다.")
