@@ -8,15 +8,14 @@ st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
 # 2. Gemini AI 엔진 연결 (Secrets에서 키 가져오기)
 # 기존 모델 설정 코드를 지우고 아래 내용으로 교체하세요
+# 기존 설정 부분을 지우고 이 코드로 교체
 try:
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        
-        # 모델명 앞에 'models/'를 붙이지 않고 가장 표준적인 이름만 사용합니다.
-        # 404 에러 방지를 위해 명시적으로 이름을 지정합니다.
+        # 모델 리스트를 확인하지 않고 가장 표준적인 이름으로 직접 호출
         model = genai.GenerativeModel('gemini-1.5-flash')
     else:
-        st.error("API 키를 찾을 수 없습니다.")
+        st.error("API 키를 찾을 수 없습니다. Secrets 설정을 확인하세요.")
 except Exception as e:
     st.error(f"AI 엔진 초기화 에러: {e}")
 
