@@ -13,7 +13,8 @@ try:
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         # 모델 리스트를 확인하지 않고 가장 표준적인 이름으로 직접 호출
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # app.py 상단 설정 부분
+model = genai.GenerativeModel('gemini-1.5-flash')
     else:
         st.error("API 키를 찾을 수 없습니다. Secrets 설정을 확인하세요.")
 except Exception as e:
