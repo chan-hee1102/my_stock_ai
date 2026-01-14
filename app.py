@@ -90,7 +90,7 @@ if data is not None:
             st.markdown(f"""
             <div class="report-box"><div class="report-text">
                 <span class="highlight-mint">● 현재 시점:</span> {datetime.now().strftime('%Y-%m-%d')} 기준 분석<br>
-                <span class="highlight-mint">● 검색 모드:</span> 최신 구글 검색 및 대화 내역 반영 중
+                <span class="highlight-mint">● 검색 모드:</span> 실시간 구글 검색 및 대화 내역 반영 중
             </div></div>
             """, unsafe_allow_html=True)
 
@@ -98,15 +98,13 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # --- 통합 AI 채팅 로직 (상태 표시 및 답변 보장) ---
+        # --- 통합 AI 채팅 로직 (LATEST 버전 고정) ---
         if prompt := st.chat_input(f"{stock['종목명']}에 대해 자유롭게 대화해보세요!"):
-            # 1. 사용자 메시지 추가
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                # 2. 생각 중... 상태 표시 시작
                 with st.status("AI 커맨더가 생각 중입니다...", expanded=True) as status:
                     try:
                         st.write("🔍 최신 데이터 검색 중...")
@@ -125,13 +123,13 @@ if data is not None:
                         google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
                         st.write("🧠 답변 구성 중...")
+                        # 모델명을 다시 gemini-flash-latest로 고정했습니다.
                         response = client.models.generate_content(
-                            model="gemini-1.5-flash", 
+                            model="gemini-flash-latest", 
                             contents=f"{instruction}\n\n사용자 질문: {prompt}",
                             config=types.GenerateContentConfig(tools=[google_search_tool])
                         )
                         
-                        # 3. 응답 텍스트 추출 (가장 안전한 방식)
                         response_text = ""
                         if response.candidates:
                             for part in response.candidates[0].content.parts:
@@ -139,9 +137,8 @@ if data is not None:
                                     response_text += part.text
                         
                         if not response_text:
-                            response_text = "⚠️ 요청하신 작업(시각화/크롤링 등)을 현재 직접 수행할 수 없습니다. 관련 수치 데이터나 뉴스 내용을 텍스트로 정리해 드릴까요?"
+                            response_text = "⚠️ 현재 요청하신 작업을 수행할 수 없습니다. 관련 수치 데이터나 뉴스 내용을 텍스트로 정리해 드릴까요?"
 
-                        # 4. 상태 표시 완료 및 답변 출력
                         status.update(label="✅ 답변 생성 완료!", state="complete", expanded=False)
                         with st.chat_message("assistant"):
                             st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{response_text}</div>", unsafe_allow_html=True)
@@ -150,6 +147,6 @@ if data is not None:
                     except Exception as e:
                         status.update(label="❌ 오류 발생", state="error", expanded=True)
                         st.error(f"상세 오류: {str(e)}")
-                        st.session_state.messages.append({"role": "assistant", "content": f"⚠️ 죄송합니다. 답변 생성 중 오류가 발생했습니다. (사유: {str(e)})"})
+                        st.session_state.messages.append({"role": "assistant", "content": f"⚠️ 오류 발생: {str(e)}"})
             
             st.rerun()
