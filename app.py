@@ -3,12 +3,13 @@ import streamlit as st
 import pandas as pd
 import os
 from google import genai
+from google.genai import types
 from datetime import datetime
 
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (사용자 기존 디자인 완벽 유지)
+# 2) 디자인 CSS (사용자님의 블랙 & 민트 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -118,7 +119,7 @@ if data is not None:
                 
                 if st.button(display_name, key=f"stock_btn_{i}"):
                     st.session_state.selected_stock = row.to_dict()
-                    st.session_state.messages = [] # 종목 변경 시 대화 내역 초기화
+                    st.session_state.messages = [] # 종목 변경 시 대화 초기화
                     st.rerun()
                 
                 st.markdown("<hr style='margin:5px 0; border:0.5px solid #30363d; opacity:0.3;'>", unsafe_allow_html=True)
@@ -130,47 +131,51 @@ if data is not None:
         chat_container = st.container(height=800)
         
         with chat_container:
-            # 기본 종목 카드 표시
             st.markdown(f"""
             <div class="report-box">
                 <div class="report-text">
                     <span class="highlight-mint">● 시장 관심도:</span> 당일 거래대금 <span class="highlight-mint">{stock.get('거래대금(억)', 'N/A')}억</span> 포착<br>
-                    <span class="highlight-mint">● 분석 상태:</span> AI 커맨더가 실시간 대화 모드로 대기 중입니다.
+                    <span class="highlight-mint">● 현재 시점:</span> {datetime.now().strftime('%Y-%m-%d')} 기준 분석<br>
+                    <span class="highlight-mint">● 분석 상태:</span> 실시간 구글 검색 및 대화 모드 활성화 중
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            # 세션에 저장된 이전 대화들 출력
+            # 이전 대화 출력
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # --- 실시간 대화형 AI 로직 ---
+        # --- 통합형 AI 채팅 로직 (기억하기 + 실시간 검색) ---
         if prompt := st.chat_input(f"{stock['종목명']}에 대해 자유롭게 대화해보세요!"):
-            # 1. 사용자 메시지 추가 및 화면 표시
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
-            # 2. AI 응답 생성
             if client:
                 try:
-                    # AI에게 문맥을 주기 위해 이전 대화 내역과 지침을 합칩니다.
-                    history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
+                    # 1. 대화 문맥 생성 (최근 10개)
+                    history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
                     
+                    # 2. 시스템 지침 및 검색 설정
+                    current_day = datetime.now().strftime('%Y-%m-%d')
                     instruction = (
-                        f"당신은 {stock['종목명']}의 주식 전문가이자 친절한 비서입니다.\n"
-                        f"지침:\n"
-                        f"- 사용자의 질문에 맞춰 자연스럽게 대화하세요.\n"
-                        f"- 'ㅎㅇ' 같은 인사에는 반갑게 인사로 답하세요.\n"
-                        f"- 요청하지 않은 긴 리포트는 생략하고, 질문에 대한 핵심만 답하세요.\n"
-                        f"- 이전 대화 내용을 참고하여 맥락 있는 답변을 하세요.\n\n"
-                        f"현재 대화 맥력:\n{history}"
+                        f"당신은 {stock['종목명']}의 주식 전문가입니다. 오늘 날짜는 {current_day}입니다.\n"
+                        f"반드시 '구글 검색' 도구를 사용하여 최신 뉴스나 실시간 주가 정보를 확인한 뒤 답변하세요.\n"
+                        f"사용자의 질문에 맞춰 대화하듯 답변하고, 불필요하게 긴 리포트 형식은 피하세요.\n\n"
+                        f"이전 대화 맥락:\n{history_text}"
                     )
+                    
+                    # 구글 검색 도구 활성화
+                    google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
+                    # 3. AI 호출
                     response = client.models.generate_content(
-                        model="gemini-flash-latest", 
-                        contents=instruction
+                        model="gemini-1.5-flash", 
+                        contents=f"{instruction}\n\n질문: {prompt}",
+                        config=types.GenerateContentConfig(
+                            tools=[google_search_tool]
+                        )
                     )
                     
                     if response.text:
