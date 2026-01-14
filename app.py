@@ -85,7 +85,7 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트</div>', unsafe_allow_html=True)
         
-        chat_container = st.container(height=800)
+        chat_container = st.container(height=700)
         with chat_container:
             st.markdown(f"""
             <div class="report-box"><div class="report-text">
@@ -98,51 +98,58 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # --- 통합 AI 채팅 로직 (기억 + 검색 + 오류 방지) ---
+        # --- 통합 AI 채팅 로직 (상태 표시 및 답변 보장) ---
         if prompt := st.chat_input(f"{stock['종목명']}에 대해 자유롭게 대화해보세요!"):
-            # 1. 사용자 메시지 즉시 추가
+            # 1. 사용자 메시지 추가
             st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                try:
-                    # 대화 문맥 유지
-                    history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
-                    
-                    # AI 지침: 시각화 불가 안내 포함
-                    instruction = (
-                        f"당신은 {stock['종목명']}의 주식 전문가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다.\n"
-                        f"반드시 '구글 검색' 도구를 사용하여 최신 정보를 확인하세요.\n"
-                        f"중요: 당신은 텍스트로만 답변할 수 있습니다. 그래프를 그려달라는 요청에는 '이미지를 직접 그릴 수는 없지만, 관련 수치 데이터를 표나 텍스트로 정리해드리겠습니다'라고 답하고 데이터를 제공하세요.\n\n"
-                        f"대화 내역:\n{history_context}"
-                    )
-                    
-                    google_search_tool = types.Tool(google_search=types.GoogleSearch())
+                # 2. 생각 중... 상태 표시 시작
+                with st.status("AI 커맨더가 생각 중입니다...", expanded=True) as status:
+                    try:
+                        st.write("🔍 최신 데이터 검색 중...")
+                        history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
+                        
+                        instruction = (
+                            f"당신은 {stock['종목명']}의 주식 전문가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다.\n"
+                            f"지침:\n"
+                            f"1. 반드시 '구글 검색' 도구를 사용하여 실시간 정보를 확인하세요.\n"
+                            f"2. 그래프 시각화나 웹 크롤링 코드를 직접 실행할 수는 없음을 명확히 알리세요.\n"
+                            f"3. 대신 필요한 데이터 수치나 재무제표 내용은 텍스트나 표 형식으로 정리해서 답변하세요.\n"
+                            f"4. 답변을 생성할 수 없는 경우, 그 이유를 구체적으로 설명하세요.\n\n"
+                            f"대화 내역:\n{history_context}"
+                        )
+                        
+                        google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
-                    # 2. AI 호출 (스피너 표시)
-                    with st.spinner("AI가 최신 정보를 검색하며 답변을 생성 중입니다..."):
+                        st.write("🧠 답변 구성 중...")
                         response = client.models.generate_content(
                             model="gemini-1.5-flash", 
                             contents=f"{instruction}\n\n사용자 질문: {prompt}",
                             config=types.GenerateContentConfig(tools=[google_search_tool])
                         )
-                    
-                    # 3. 응답 텍스트 추출 및 저장 (안전 처리)
-                    response_text = ""
-                    if hasattr(response, 'text') and response.text:
-                        response_text = response.text
-                    elif response.candidates:
-                        # 텍스트가 직접 안 보일 경우 첫 번째 후보의 파트 확인
-                        for part in response.candidates[0].content.parts:
-                            if part.text:
-                                response_text += part.text
-                    
-                    if response_text:
+                        
+                        # 3. 응답 텍스트 추출 (가장 안전한 방식)
+                        response_text = ""
+                        if response.candidates:
+                            for part in response.candidates[0].content.parts:
+                                if part.text:
+                                    response_text += part.text
+                        
+                        if not response_text:
+                            response_text = "⚠️ 요청하신 작업(시각화/크롤링 등)을 현재 직접 수행할 수 없습니다. 관련 수치 데이터나 뉴스 내용을 텍스트로 정리해 드릴까요?"
+
+                        # 4. 상태 표시 완료 및 답변 출력
+                        status.update(label="✅ 답변 생성 완료!", state="complete", expanded=False)
+                        with st.chat_message("assistant"):
+                            st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{response_text}</div>", unsafe_allow_html=True)
                         st.session_state.messages.append({"role": "assistant", "content": response_text})
-                    else:
-                        st.session_state.messages.append({"role": "assistant", "content": "⚠️ 죄송합니다. 정보를 찾았으나 답변을 구성하는 데 실패했습니다. 다시 질문해 주세요."})
-                
-                except Exception as e:
-                    st.error(f"⚠️ 오류 발생: {str(e)}")
+                    
+                    except Exception as e:
+                        status.update(label="❌ 오류 발생", state="error", expanded=True)
+                        st.error(f"상세 오류: {str(e)}")
+                        st.session_state.messages.append({"role": "assistant", "content": f"⚠️ 죄송합니다. 답변 생성 중 오류가 발생했습니다. (사유: {str(e)})"})
             
-            # 4. 화면 갱신
             st.rerun()
