@@ -12,19 +12,13 @@ st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
-    
-    /* 박스 영역 배경색 */
     [data-testid="stHorizontalBlock"] > div {
         background-color: #1c2128; border-radius: 15px; padding: 25px; border: 1px solid #30363d;
     }
-
-    /* 섹션 헤더 */
     .section-header { 
         color: #00e5ff !important; font-size: 1.5rem !important; font-weight: 800; 
         margin-bottom: 25px; border-left: 6px solid #00e5ff; padding-left: 15px; 
     }
-
-    /* 좌측 종목 리스트 */
     div[data-testid="stColumn"]:nth-of-type(1) .stButton > button {
         width: 100% !important;
         background-color: transparent !important;
@@ -36,21 +30,16 @@ st.markdown("""
         padding: 12px 0px !important;
         transition: 0.3s;
     }
-    
     div[data-testid="stColumn"]:nth-of-type(1) .stButton > button:hover {
         color: #00e5ff !important;
         transform: translateX(8px);
     }
-
-    /* 리포트 박스 */
     .report-box {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px;
         padding: 25px; margin-bottom: 20px;
     }
     .report-text { color: #e0e6ed !important; font-size: 1.2rem !important; line-height: 1.8; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
-
-    /* 채팅 입력창 */
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 15px !important; padding: 10px !important; }
     div[data-testid="stChatInput"] textarea { color: #000000 !important; font-size: 1.15rem !important; }
     </style>
@@ -76,16 +65,14 @@ def load_data():
 
 data, data_date = load_data()
 
-# 세션 상태 초기화
 if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
 
-# Gemini 클라이언트 설정 (Secrets에서 키를 유연하게 가져옴)
+# Gemini 클라이언트 설정
 def get_client():
     api_key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
-    if not api_key:
-        return None
+    if not api_key: return None
     return genai.Client(api_key=api_key)
 
 client = get_client()
@@ -126,15 +113,15 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # 채팅 입력 및 AI 응답 (오류 해결 로직 포함)
+        # --- 채팅 입력 및 AI 응답 (gemini-flash-latest 사용) ---
         if prompt := st.chat_input(f"{stock['종목명']}에 대해 질문하세요"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             
             if client:
                 try:
-                    # 'gemini-flash-latest' 대신 'gemini-1.5-flash' 사용
+                    # 사용자님이 찾아내신 정답 모델명으로 복구!
                     response = client.models.generate_content(
-                        model="gemini-1.5-flash", 
+                        model="gemini-flash-latest", 
                         contents=f"당신은 주식 전문가입니다. 종목명: {stock['종목명']}. 질문: {prompt}. 명확하고 전문적으로 답변하세요."
                     )
                     
@@ -143,8 +130,7 @@ if data is not None:
                     else:
                         st.session_state.messages.append({"role": "assistant", "content": "AI 응답을 생성하지 못했습니다."})
                 except Exception as e:
-                    # ClientError 발생 시 구체적인 이유를 채팅창에 출력
-                    st.session_state.messages.append({"role": "assistant", "content": f"⚠️ API 요청 오류: {str(e)}"})
+                    st.session_state.messages.append({"role": "assistant", "content": f"⚠️ 오류 발생: {str(e)}"})
             else:
                 st.error("API 키를 확인해주세요.")
             st.rerun()
