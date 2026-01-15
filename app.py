@@ -9,7 +9,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (사용자님의 블랙 & 민트 디자인 유지)
+# 2) 디자인 CSS (블랙 & 민트 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -83,14 +83,15 @@ if data is not None:
 
     with col_chat:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트 (Pro)</div>', unsafe_allow_html=True)
         
         chat_container = st.container(height=700)
         with chat_container:
             st.markdown(f"""
             <div class="report-box"><div class="report-text">
                 <span class="highlight-mint">● 현재 시점:</span> {datetime.now().strftime('%Y-%m-%d')} 기준 분석<br>
-                <span class="highlight-mint">● 검색 모드:</span> 실시간 구글 검색 및 대화 내역 반영 중
+                <span class="highlight-mint">● 엔진:</span> Gemini 1.5 Pro (최신 버전)<br>
+                <span class="highlight-mint">● 검색 모드:</span> 실시간 구글 검색 및 심층 추론 적용 중
             </div></div>
             """, unsafe_allow_html=True)
 
@@ -98,34 +99,34 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # --- 통합 AI 채팅 로직 (LATEST 버전 고정) ---
-        if prompt := st.chat_input(f"{stock['종목명']}에 대해 자유롭게 대화해보세요!"):
+        # --- AI 채팅 로직 (Gemini 1.5 Pro 적용) ---
+        if prompt := st.chat_input(f"{stock['종목명']}에 대해 심층 분석을 요청해보세요!"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                with st.status("AI 커맨더가 생각 중입니다...", expanded=True) as status:
+                with st.status("AI 커맨더가 심층 분석 중입니다...", expanded=True) as status:
                     try:
-                        st.write("🔍 최신 데이터 검색 중...")
+                        st.write("🔍 실시간 구글 데이터 검색 및 대조 중...")
                         history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
                         
                         instruction = (
-                            f"당신은 {stock['종목명']}의 주식 전문가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다.\n"
+                            f"당신은 {stock['종목명']}의 최고 주식 전략가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다.\n"
                             f"지침:\n"
-                            f"1. 반드시 '구글 검색' 도구를 사용하여 실시간 정보를 확인하세요.\n"
-                            f"2. 그래프 시각화나 웹 크롤링 코드를 직접 실행할 수는 없음을 명확히 알리세요.\n"
-                            f"3. 대신 필요한 데이터 수치나 재무제표 내용은 텍스트나 표 형식으로 정리해서 답변하세요.\n"
-                            f"4. 답변을 생성할 수 없는 경우, 그 이유를 구체적으로 설명하세요.\n\n"
-                            f"대화 내역:\n{history_context}"
+                            f"1. '구글 검색' 도구를 활용해 실시간 뉴스, 공시, 재무 수치를 철저히 확인하세요.\n"
+                            f"2. 단순 정보 나열이 아닌, 데이터에 기반한 투자 전략과 리스크를 심도 있게 분석하세요.\n"
+                            f"3. 모든 답변은 텍스트와 표 형식으로 깔끔하게 구성하세요.\n"
+                            f"4. 대화의 맥락을 유지하며 전문가다운 어조로 답변하세요.\n\n"
+                            f"이전 대화 내역:\n{history_context}"
                         )
                         
                         google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
-                        st.write("🧠 답변 구성 중...")
-                        # 모델명을 다시 gemini-flash-latest로 고정했습니다.
+                        st.write("🧠 Pro 엔진 추론 및 리포트 작성 중...")
+                        # 유료 계정의 이점을 살려 gemini-1.5-pro-latest로 변경
                         response = client.models.generate_content(
-                            model="gemini-flash-latest", 
+                            model="gemini-1.5-pro-latest", 
                             contents=f"{instruction}\n\n사용자 질문: {prompt}",
                             config=types.GenerateContentConfig(tools=[google_search_tool])
                         )
@@ -137,9 +138,9 @@ if data is not None:
                                     response_text += part.text
                         
                         if not response_text:
-                            response_text = "⚠️ 현재 요청하신 작업을 수행할 수 없습니다. 관련 수치 데이터나 뉴스 내용을 텍스트로 정리해 드릴까요?"
+                            response_text = "⚠️ 상세 리포트를 생성하는 데 일시적인 제약이 발생했습니다. 다시 시도해 주시겠습니까?"
 
-                        status.update(label="✅ 답변 생성 완료!", state="complete", expanded=False)
+                        status.update(label="✅ 심층 분석 리포트 생성 완료!", state="complete", expanded=False)
                         with st.chat_message("assistant"):
                             st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{response_text}</div>", unsafe_allow_html=True)
                         st.session_state.messages.append({"role": "assistant", "content": response_text})
