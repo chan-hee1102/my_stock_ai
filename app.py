@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (찬희님의 시그니처 다크 디자인 보존)
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -38,7 +38,7 @@ st.markdown("""
         width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: center; color: #ffffff;
     }
     .investor-table th { background-color: #0d1117; color: #8b949e; padding: 5px; border-bottom: 1px solid #30363d; }
-    .investor-table td { padding: 6px; border-bottom: 1px solid #1c2128; }
+    .investor-table td { padding: 6px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; }
     .val-plus { color: #ff3366; } 
     .val-minus { color: #00e5ff; } 
 
@@ -63,7 +63,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 및 수급 데이터 수집
+# 3) 데이터 로드 및 수급 데이터 크롤링
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -85,28 +85,26 @@ def load_data():
 def get_investor_trend(code):
     try:
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': 'https://finance.naver.com/'
+        }
         res = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        table = soup.find('table', {'class': 'type2'})
+        if not table: return None
         
-        # pandas read_html을 사용하여 이미지 9686ec.jpg의 '투자자별 매매동향' 테이블 추출
-        tables = pd.read_html(res.text)
-        for df_table in tables:
-            # '기관'과 '외국인' 순매매량이 포함된 테이블 찾기
-            if any('기관' in str(c) for c in df_table.columns) and any('외국인' in str(c) for c in df_table.columns):
-                # 불필요한 행 제거 및 최근 5거래일 추출
-                df_res = df_table.dropna(subset=[df_table.columns[0]]).head(5)
-                # 날짜 포맷 (MM.DD)
-                df_res['날짜_short'] = df_res.iloc[:, 0].astype(str).str[-5:]
-                # 기관/외인 순매매량 데이터 타입 정제
-                inst_col = [c for c in df_table.columns if '기관' in str(c)][0]
-                fore_col = [c for c in df_table.columns if '외국인' in str(c)][0]
-                
-                df_res['inst'] = pd.to_numeric(df_res[inst_col], errors='coerce').fillna(0).astype(int)
-                df_res['fore'] = pd.to_numeric(df_res[fore_col], errors='coerce').fillna(0).astype(int)
-                
-                return df_res[['날짜_short', 'inst', 'fore']].rename(columns={'날짜_short':'날짜', 'inst':'기관', 'fore':'외인'})
-        return None
-    except:
+        rows = table.find_all('tr', {'onmouseover': 'mouseOver(this)'})
+        data_list = []
+        for row in rows[:5]:
+            cols = row.find_all('td')
+            if len(cols) < 9: continue
+            date = cols[0].text.strip()[5:] 
+            institution = int(cols[5].text.replace(',', '').strip())
+            foreigner = int(cols[6].text.replace(',', '').strip())
+            data_list.append({"날짜": date, "기관": institution, "외인": foreigner})
+        return pd.DataFrame(data_list)
+    except Exception:
         return None
 
 data, data_date = load_data()
@@ -127,11 +125,10 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [되돌림] 이미지 8ac8c6 스타일의 시각화 차트 함수
+# [되돌림] 이미지 8ac8c6 스타일의 시각화 함수
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
-    # 영업이익은 민트색, 부채비율은 핑크색 계열
     color = "#00e5ff" if not is_debt else "#ff3366"
     
     fig.add_trace(go.Scatter(
@@ -183,7 +180,6 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
-        # 차트와 수급표 7:3 분할
         chart_col, supply_col = st.columns([7, 3])
         with chart_col:
             ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
@@ -197,13 +193,16 @@ if data is not None:
             except: turnover = 0
 
         with supply_col:
+            # [에러 해결] 데이터가 있을 때만 루프를 돌도록 수정
             invest_df = get_investor_trend(stock['종목코드'])
-            if invest_df is not None:
+            if invest_df is not None and not invest_df.empty:
                 html_code = '<table class="investor-table"><tr><th>날짜</th><th>외인</th><th>기관</th></tr>'
                 for _, r in invest_df.iterrows():
-                    f_cls = "val-plus" if r['외인'] > 0 else "val-minus"
-                    i_cls = "val-plus" if r['기관'] > 0 else "val-minus"
-                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{r["외인"]:,}</td><td class="{i_cls}">{r["기관"]:,}</td></tr>'
+                    f_val = r['외인']
+                    i_val = r['기관']
+                    f_cls = "val-plus" if f_val > 0 else "val-minus"
+                    i_cls = "val-plus" if i_val > 0 else "val-minus"
+                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{f_val:,}</td><td class="{i_cls}">{i_val:,}</td></tr>'
                 html_code += "</table>"
                 st.markdown(html_code, unsafe_allow_html=True)
             else:
@@ -224,7 +223,7 @@ if data is not None:
 
         st.markdown('<div class="wide-analysis-box"><span class="analysis-title">🎯 AI 내일 상승 확률</span><div class="probability-text">데이터 분석 중...</div></div>', unsafe_allow_html=True)
 
-        # 재무 차트 영역 (디자인 복구 완료)
+        # 재무 차트 영역 (디자인 복구)
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
