@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (시그니처 다크 모드 보존 및 테이블 글씨 확대)
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,14 +34,13 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    /* 수급표 디자인 수정 (글씨 확대) */
     .investor-table {
         width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff;
     }
     .investor-table th { background-color: #0d1117; color: #8b949e; padding: 8px; border-bottom: 1px solid #30363d; }
     .investor-table td { padding: 8px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; font-weight: 600; }
-    .val-plus { color: #ff3366; } /* 빨간색 (양수) */
-    .val-minus { color: #00e5ff; } /* 파란색 (음수) */
+    .val-plus { color: #ff3366; } 
+    .val-minus { color: #00e5ff; } 
 
     .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
     .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
@@ -64,7 +63,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 및 수급 데이터 크롤링 함수
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -72,19 +70,16 @@ def load_data():
     if not files: return None, None
     latest_file = sorted(files)[-1]
     df = pd.read_csv(os.path.join(out_dir, latest_file))
-    
     if "시장" in df.columns:
         df["시장"] = df["시장"].astype(str).str.strip()
         df.loc[df["시장"].str.contains("유가|KOSPI", na=False), "시장"] = "KOSPI"
         df.loc[df["시장"].str.contains("코스닥|KOSDAQ", na=False), "시장"] = "KOSDAQ"
-        
     if "종목코드" in df.columns:
         df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
     return df, latest_file.split('_')[-1].replace('.csv', '')
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
-    """네이버 금융 수급 데이터 수집 (크롤링 강화 버전)"""
     try:
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
         headers = {
@@ -93,18 +88,15 @@ def get_investor_trend(code):
         }
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        
         rows = soup.find_all('tr', {'onmouseover': 'mouseOver(this)'})
         data_list = []
         for row in rows[:5]:
             cols = row.find_all('td')
             if len(cols) < 9: continue
-            
-            date = cols[0].text.strip()[-5:] # MM.DD
+            date = cols[0].text.strip()[-5:] 
             inst = int(cols[5].text.replace(',', '').strip())
             fore = int(cols[6].text.replace(',', '').strip())
             data_list.append({"날짜": date, "기관": inst, "외인": fore})
-            
         return pd.DataFrame(data_list) if data_list else None
     except Exception:
         return None
@@ -127,34 +119,18 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# 재무 차트 시각화 함수
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
     color = "#00e5ff" if not is_debt else "#ff3366"
-    
-    fig.add_trace(go.Scatter(
-        x=dates, 
-        y=values, 
-        mode='lines+markers+text',
-        text=[f"{v:,.0f}{unit}" for v in values], 
-        textposition="top center",
-        line=dict(color=color, width=3), 
-        marker=dict(size=8, color=color, symbol='circle')
-    ))
-    
-    fig.update_layout(
-        template="plotly_dark", 
-        height=200, 
-        margin=dict(l=10, r=10, t=30, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", 
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, dtick=1), 
-        yaxis=dict(showgrid=True, gridcolor="#30363d")
-    )
+    fig.add_trace(go.Scatter(x=dates, y=values, mode='lines+markers+text',
+                             text=[f"{v:,.0f}{unit}" for v in values], textposition="top center",
+                             line=dict(color=color, width=3), marker=dict(size=8, color=color, symbol='circle')))
+    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=10, r=10, t=30, b=10),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      xaxis=dict(showgrid=False, dtick=1), yaxis=dict(showgrid=True, gridcolor="#30363d"))
     return fig
 
-# 4) 메인 레이아웃
 if data is not None:
     if "selected_stock" not in st.session_state:
         st.session_state.selected_stock = data.iloc[0].to_dict()
@@ -187,10 +163,20 @@ if data is not None:
             ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
             try:
                 tk = yf.Ticker(ticker)
-                hist = tk.history(period="3mo")
-                # [수정] 캔들 색상 변경: 양봉(빨강), 음봉(파랑)
-                fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
-                fig.update_layout(template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
+                # 40봉 노출을 위해 넉넉히 가져온 후 tail(40) 처리
+                hist_full = tk.history(period="3mo")
+                hist = hist_full.tail(40)
+                
+                fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
+                                                     increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
+                
+                # [핵심 수정] Y축 가격 전체 표시 및 X축 날짜 숫자 형식
+                fig.update_layout(
+                    template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
+                    paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
+                    yaxis=dict(tickformat=",d"), # k 단위 제거 및 천단위 콤마
+                    xaxis=dict(tickformat="%m.%d") # 월.일 숫자 형식
+                )
                 st.plotly_chart(fig, use_container_width=True)
                 turnover = stock.get('최근거래일거래대금(억)', 0)
             except: turnover = 0
@@ -200,11 +186,9 @@ if data is not None:
             if invest_df is not None and not invest_df.empty:
                 html_code = '<table class="investor-table"><tr><th>날짜</th><th>외인</th><th>기관</th></tr>'
                 for _, r in invest_df.iterrows():
-                    f_val = r['외인']
-                    i_val = r['기관']
-                    f_cls = "val-plus" if f_val > 0 else "val-minus"
-                    i_cls = "val-plus" if i_val > 0 else "val-minus"
-                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{f_val:,}</td><td class="{i_cls}">{i_val:,}</td></tr>'
+                    f_cls = "val-plus" if r['외인'] > 0 else "val-minus"
+                    i_cls = "val-plus" if r['기관'] > 0 else "val-minus"
+                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{r["외인"]:,}</td><td class="{i_cls}">{r["기관"]:,}</td></tr>'
                 html_code += "</table>"
                 st.markdown(html_code, unsafe_allow_html=True)
             else:
@@ -225,7 +209,6 @@ if data is not None:
 
         st.markdown('<div class="wide-analysis-box"><span class="analysis-title">🎯 AI 내일 상승 확률</span><div class="probability-text">데이터 분석 중...</div></div>', unsafe_allow_html=True)
 
-        # 재무 차트
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
