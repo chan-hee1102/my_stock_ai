@@ -54,7 +54,7 @@ def load_data():
         
     df = pd.read_csv(os.path.join(out_dir, latest_file))
     
-    # 데이터 클리닝: '시장' 컬럼의 공백 제거 및 대문자 통일
+    # 데이터 클리닝: '시장' 컬럼의 공백 제거 및 대문자 통일 (정확한 필터링을 위해 필수)
     if "시장" in df.columns:
         df["시장"] = df["시장"].astype(str).str.strip().str.upper()
     if "종목코드" in df.columns: 
@@ -80,7 +80,6 @@ if data is not None:
     df_kospi = data[data["시장"] == "KOSPI"].copy()
     df_kosdaq = data[data["시장"] == "KOSDAQ"].copy()
 
-    # 사이드바 리스트(3.5)와 메인 채팅(6.5) 비중 조절
     col_list, col_chat = st.columns([3.5, 6.5])
 
     with col_list:
