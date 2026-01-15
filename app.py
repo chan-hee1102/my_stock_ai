@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (찬희님의 오리지널 다크 모드 디자인 보존)
+# 2) 디자인 CSS (찬희님의 시그니처 다크 디자인 보존)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,7 +34,6 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    /* 수급표 스타일 */
     .investor-table {
         width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: center; color: #ffffff;
     }
@@ -64,7 +63,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 및 수급 데이터 수집 로직
+# 3) 데이터 로드 및 수급 데이터 수집
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -84,25 +83,28 @@ def load_data():
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
-    """새로운 수급 데이터 수집 방식 (pandas read_html 활용)"""
     try:
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         res = requests.get(url, headers=headers, timeout=10)
         
-        # HTML 내의 모든 테이블을 읽어옴
+        # pandas read_html을 사용하여 이미지 9686ec.jpg의 '투자자별 매매동향' 테이블 추출
         tables = pd.read_html(res.text)
-        
-        # 투자자별 매매동향은 보통 3번째 혹은 4번째 테이블에 위치함
         for df_table in tables:
-            if '기관' in df_table.columns and '외국인' in df_table.columns:
-                # 불필요한 행 제거 및 최근 5일 데이터 추출
-                df_res = df_table.dropna(subset=['날짜']).head(5)
-                df_res['날짜'] = df_res['날짜'].str[5:] # MM.DD 형식
-                # 숫자로 변환
-                df_res['기관'] = pd.to_numeric(df_res['기관'], errors='coerce').fillna(0).astype(int)
-                df_res['외인'] = pd.to_numeric(df_res['외국인'], errors='coerce').fillna(0).astype(int)
-                return df_res[['날짜', '기관', '외인']]
+            # '기관'과 '외국인' 순매매량이 포함된 테이블 찾기
+            if any('기관' in str(c) for c in df_table.columns) and any('외국인' in str(c) for c in df_table.columns):
+                # 불필요한 행 제거 및 최근 5거래일 추출
+                df_res = df_table.dropna(subset=[df_table.columns[0]]).head(5)
+                # 날짜 포맷 (MM.DD)
+                df_res['날짜_short'] = df_res.iloc[:, 0].astype(str).str[-5:]
+                # 기관/외인 순매매량 데이터 타입 정제
+                inst_col = [c for c in df_table.columns if '기관' in str(c)][0]
+                fore_col = [c for c in df_table.columns if '외국인' in str(c)][0]
+                
+                df_res['inst'] = pd.to_numeric(df_res[inst_col], errors='coerce').fillna(0).astype(int)
+                df_res['fore'] = pd.to_numeric(df_res[fore_col], errors='coerce').fillna(0).astype(int)
+                
+                return df_res[['날짜_short', 'inst', 'fore']].rename(columns={'날짜_short':'날짜', 'inst':'기관', 'fore':'외인'})
         return None
     except:
         return None
@@ -125,17 +127,32 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [되돌림] 찬희님이 원하시는 기존 재무 시각화 로직
+# [되돌림] 이미지 8ac8c6 스타일의 시각화 차트 함수
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
-    color = "#00e5ff" if (not is_debt and values[-1] > 0) else "#ff3366"
-    fig.add_trace(go.Scatter(x=dates, y=values, mode='lines+markers+text',
-                             text=[f"{v:,.0f}{unit}" for v in values], textposition="top center",
-                             line=dict(color=color, width=3), marker=dict(size=8, color=color)))
-    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=10, r=10, t=10, b=10),
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d"))
+    # 영업이익은 민트색, 부채비율은 핑크색 계열
+    color = "#00e5ff" if not is_debt else "#ff3366"
+    
+    fig.add_trace(go.Scatter(
+        x=dates, 
+        y=values, 
+        mode='lines+markers+text',
+        text=[f"{v:,.0f}{unit}" for v in values], 
+        textposition="top center",
+        line=dict(color=color, width=3), 
+        marker=dict(size=8, color=color, symbol='circle')
+    ))
+    
+    fig.update_layout(
+        template="plotly_dark", 
+        height=200, 
+        margin=dict(l=10, r=10, t=30, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", 
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, dtick=1), 
+        yaxis=dict(showgrid=True, gridcolor="#30363d")
+    )
     return fig
 
 # 4) 메인 레이아웃
@@ -166,6 +183,7 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
+        # 차트와 수급표 7:3 분할
         chart_col, supply_col = st.columns([7, 3])
         with chart_col:
             ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
@@ -206,12 +224,20 @@ if data is not None:
 
         st.markdown('<div class="wide-analysis-box"><span class="analysis-title">🎯 AI 내일 상승 확률</span><div class="probability-text">데이터 분석 중...</div></div>', unsafe_allow_html=True)
 
+        # 재무 차트 영역 (디자인 복구 완료)
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
             debt = (tk.balance_sheet.loc['Total Debt'] / tk.balance_sheet.loc['Stockholders Equity'] * 100).sort_index()
-            if income is not None: st.plotly_chart(draw_finance_chart(income.index.year, income.values, "억"), use_container_width=True)
-            if debt is not None: st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", True), use_container_width=True)
+            
+            with f_col1:
+                st.markdown('<div class="finance-header-box"><span class="finance-label-compact">💰 연간 영업이익 (억)</span></div>', unsafe_allow_html=True)
+                if income is not None:
+                    st.plotly_chart(draw_finance_chart(income.index.year, income.values, "억"), use_container_width=True)
+            with f_col2:
+                st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 (%)</span></div>', unsafe_allow_html=True)
+                if debt is not None:
+                    st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
     with col_chat:
