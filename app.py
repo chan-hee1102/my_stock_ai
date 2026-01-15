@@ -47,18 +47,19 @@ def load_data():
 
 data, data_date = load_data()
 
-# 세션 관리
+# 세션 상태 초기화
 if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
 
+# Gemini 클라이언트
 def get_client():
     key = st.secrets.get("GEMINI_API_KEY")
     return genai.Client(api_key=key) if key else None
 
 client = get_client()
 
-# 4) 레이아웃
+# 4) 메인 화면 구성
 if data is not None:
     col_list, col_chat = st.columns([2, 8])
 
@@ -76,47 +77,65 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 전략 사령부</div>', unsafe_allow_html=True)
         
-        chat_container = st.container(height=650)
+        # --- [고정] 상단 리포트 요약 박스 ---
+        st.markdown(f"""
+        <div class="report-box"><div class="report-text">
+            <span class="highlight-mint">● 타겟:</span> {stock["종목명"]} ({stock.get('종목코드', 'N/A')})<br>
+            <span class="highlight-mint">● 엔진:</span> Gemini 2.0 Flash (심층 분석 모드)<br>
+            <span class="highlight-mint">● 업데이트:</span> {datetime.now().strftime('%Y-%m-%d %H:%M')} 실시간 데이터 적용
+        </div></div>
+        """, unsafe_allow_html=True)
+
+        # 채팅 내역 표시 컨테이너
+        chat_container = st.container(height=600)
         with chat_container:
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.1rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        if prompt := st.chat_input(f"{stock['종목명']} 심층 분석 요청..."):
+        # 채팅 입력 및 처리
+        if prompt := st.chat_input(f"{stock['종목명']}에 대한 실시간 분석을 요청하세요."):
+            # 1. 사용자 메시지 추가 및 표시
             st.session_state.messages.append({"role": "user", "content": prompt})
-            st.rerun() # 사용자의 질문을 즉시 화면에 띄우기 위해 재실행
+            with chat_container:
+                with st.chat_message("user"):
+                    st.markdown(f"<div style='font-size:1.1rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
 
-# 5) AI 응답 처리 (재실행 후 메시지가 유저 것으로 끝날 때 실행)
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    user_prompt = st.session_state.messages[-1]["content"]
-    
-    with st.chat_message("assistant"):
-        with st.status("🚀 AI 분석관이 실시간 정보를 추적 중...", expanded=True) as status:
-            try:
-                # 2.0-flash 모델 고정 (가장 안정적)
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash", 
-                    contents=f"종목 {stock['종목명']}에 대해 다음을 분석하라: {user_prompt}",
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())]
-                    )
-                )
-                
-                # 답변 추출 (무응답 원천 차단 로직)
-                res_text = ""
-                if hasattr(response, 'text') and response.text:
-                    res_text = response.text
-                elif response.candidates:
-                    for part in response.candidates[0].content.parts:
-                        if part.text: res_text += part.text
-                
-                if not res_text:
-                    res_text = "⚠️ 검색 결과는 확인했으나 분석을 정리하는 과정에서 지연이 발생했습니다. 질문을 조금 더 구체적으로(예: '오늘 뉴스 알려줘') 해주세요."
+            # 2. AI 응답 생성
+            if client:
+                with st.status("🚀 분석관이 데이터 트래킹 중...", expanded=True) as status:
+                    try:
+                        # 대화 맥락 포함
+                        history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-5:]])
+                        
+                        response = client.models.generate_content(
+                            model="gemini-2.0-flash", 
+                            contents=f"당신은 금융 전문가입니다. {stock['종목명']}에 대한 질문에 답변하세요: {prompt}\n\n맥락:\n{history}",
+                            config=types.GenerateContentConfig(
+                                tools=[types.Tool(google_search=types.GoogleSearch())]
+                            )
+                        )
+                        
+                        # 응답 텍스트 추출
+                        res_text = ""
+                        if hasattr(response, 'text') and response.text:
+                            res_text = response.text
+                        elif response.candidates:
+                            for part in response.candidates[0].content.parts:
+                                if part.text: res_text += part.text
+                        
+                        if not res_text:
+                            res_text = "⚠️ 검색 결과를 요약하는 과정에서 지연이 발생했습니다. 다시 한번 질문해 주세요."
 
-                st.markdown(f"<div style='font-size:1.1rem; color:#ffffff;'>{res_text}</div>", unsafe_allow_html=True)
-                st.session_state.messages.append({"role": "assistant", "content": res_text})
-                status.update(label="✅ 분석 완료", state="complete")
-                
-            except Exception as e:
-                status.update(label="❌ 오류 발생", state="error")
-                st.error(f"원인: {str(e)}")
+                        # 3. 답변 표시 및 저장
+                        with chat_container:
+                            with st.chat_message("assistant"):
+                                st.markdown(f"<div style='font-size:1.1rem; color:#ffffff;'>{res_text}</div>", unsafe_allow_html=True)
+                        st.session_state.messages.append({"role": "assistant", "content": res_text})
+                        status.update(label="✅ 분석 완료", state="complete", expanded=False)
+                        
+                    except Exception as e:
+                        status.update(label="❌ 오류 발생", state="error")
+                        st.error(f"원인: {str(e)}")
+            
+            # 마지막에 rerun을 하지 않고 자연스럽게 상태 유지
