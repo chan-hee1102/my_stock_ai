@@ -4,94 +4,75 @@ import pandas as pd
 import os
 import yfinance as yf
 import plotly.graph_objects as go
-import numpy as np
-import re
 from groq import Groq
 from datetime import datetime, timedelta
 
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 시그니처 디자인 + 확률 박스 강조)
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 + 헤더 박스 및 공간 최적화)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
+    
+    /* 3분할 카드 디자인 */
     [data-testid="stHorizontalBlock"] > div {
-        background-color: #1c2128; border-radius: 15px; padding: 15px; border: 1px solid #30363d;
+        background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
         display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
     }
-    .section-header { color: #00e5ff !important; font-size: 1.3rem !important; font-weight: 800; margin-bottom: 15px; border-left: 6px solid #00e5ff; padding-left: 15px; }
-    .market-header { background-color: #0d1117; color: #8b949e; font-size: 0.8rem; font-weight: 800; text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #30363d; }
-    .stButton > button { width: 100% !important; background-color: transparent !important; color: #ffffff !important; border: none !important; font-size: 0.9rem !important; text-align: left !important; padding: 4px 0px !important; }
+    
+    .section-header { 
+        color: #00e5ff !important; font-size: 1.3rem !important; font-weight: 800; 
+        margin-bottom: 20px; border-left: 6px solid #00e5ff; padding-left: 15px; 
+    }
+    
+    .market-header {
+        background-color: #0d1117; color: #8b949e; font-size: 0.8rem; font-weight: 800;
+        text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #30363d;
+    }
+    
+    .stButton > button {
+        width: 100% !important; background-color: transparent !important; color: #ffffff !important;
+        border: none !important; font-size: 0.9rem !important; text-align: left !important; padding: 4px 0px !important;
+    }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    /* 테마 및 분석 박스 */
-    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 10px; margin-bottom: 15px; }
+    /* 테마 분석 박스 */
+    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
+    .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
+    .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     
-    /* 통합 분석 영역 (가운데 웅장한 확률 박스) */
+    /* 통합 분석 영역 박스 */
     .wide-analysis-box {
         background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
-        padding: 30px; margin-bottom: 15px; text-align: center; min-height: 280px;
-        display: flex; flex-direction: column; justify-content: center; align-items: center;
+        padding: 30px; margin-bottom: 20px; text-align: center;
+        min-height: 220px; display: flex; flex-direction: column; justify-content: center; align-items: center;
     }
-    .prob-value { font-size: 4.8rem; font-weight: 900; color: #00e5ff; text-shadow: 0 0 30px rgba(0,229,255,0.5); margin: 5px 0; }
-    .prob-desc { color: #ffffff; font-size: 1.1rem; font-weight: 600; line-height: 1.5; margin-top: 10px; }
+    .analysis-title { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 15px; display: block; }
+    .probability-text { color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; }
+    
+    /* [완결] 재무제표 상단 헤더 바 (검정 얇은 영역) */
+    .finance-header-box {
+        background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+        padding: 8px 15px; margin-bottom: 5px; width: 100%;
+        display: flex; align-items: center;
+    }
+    .finance-label-compact { 
+        color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0;
+    }
 
-    /* 재무제표 헤더 */
-    .finance-header-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 12px; margin-bottom: 0px; width: 100%; display: flex; align-items: center; }
-    .finance-label-compact { color: #00e5ff; font-size: 0.9rem; font-weight: 800; margin: 0; }
-    .finance-card-compact { background-color: transparent; padding: 0px; margin-top: -15px !important; min-height: auto !important; display: flex !important; flex-direction: column !important; }
+    /* 재무제표 카드: 불필요한 여백(빨간 박스) 제거 */
+    .finance-card-compact {
+        background-color: transparent; padding: 0px; margin-top: 5px; 
+        min-height: auto !important; display: flex !important; flex-direction: column !important;
+    }
 
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 확률 계산 및 AI 연동 로직
-def get_robust_rise_probability(ticker_symbol, stock_name):
-    try:
-        # 1. 과거 데이터 수집 (백테스팅 기본값 2년)
-        df = yf.download(ticker_symbol, period="2y", interval="1d", progress=False)
-        if len(df) < 30: return 50, "분석 가능한 과거 데이터가 부족합니다."
-
-        df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
-        df['Price_Change'] = df['Close'].pct_change()
-        
-        # 찬희님의 선정 기준 시뮬레이션: 거래량 급증 + 상승 마감
-        signals = df[(df['Volume'] > df['Vol_MA'] * 1.8) & (df['Price_Change'] > 0.015)]
-        
-        success = 0
-        for i in range(len(signals)):
-            try:
-                idx = df.index.get_loc(signals.index[i])
-                if idx + 1 < len(df) and df.iloc[idx + 1]['Close'] > df.iloc[idx]['Close']: success += 1
-            except: continue
-        
-        # 기본 통계 확률 (백테스팅 결과)
-        hit_rate = int((success / len(signals) * 100)) if len(signals) > 0 else 52
-
-        # 2. AI에게 최종 판단 요청
-        if client:
-            prompt = (f"종목: {stock_name}\n과거 유사패턴 포착: {len(signals)}회\n익일 상승 적중: {success}회\n"
-                      f"위 통계를 바탕으로 내일 주가가 상승할 확률(%)을 정하고 '확률: [숫자]%' 형식으로 첫 줄에 답한 뒤, 이유를 한국어 한 줄로 쓰세요.")
-            res = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "system", "content": "주식 데이터 전문가입니다. 100% 한국어로만 답변하세요."},
-                          {"role": "user", "content": prompt}], temperature=0.1
-            )
-            ai_ans = res.choices[0].message.content
-            
-            # [수정] 숫자 추출 로직 강화 (정규식 사용)
-            numbers = re.findall(r'\d+', ai_ans.split('\n')[0])
-            final_prob = int(numbers[0]) if numbers else hit_rate
-            final_desc = ai_ans.split('\n')[-1].strip()
-            return final_prob, final_desc
-        
-        return hit_rate, f"과거 {len(signals)}회 포착 중 {success}회 상승 적중 (통계 기반)"
-    except Exception as e:
-        return 55, f"데이터 분석 중: {str(e)}"
-
-# 4) 데이터 로드 및 UI 초기화
+# 3) 데이터 로드 및 AI 엔진
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -99,50 +80,82 @@ def load_data():
     if not files: return None, None
     latest_file = sorted(files)[-1]
     df = pd.read_csv(os.path.join(out_dir, latest_file))
+    if "시장" in df.columns: df["시장"] = df["시장"].astype(str).str.strip().str.upper()
     if "종목코드" in df.columns: df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
     return df, latest_file.split('_')[-1].replace('.csv', '')
 
 data, data_date = load_data()
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
 
+# [로직 수정] AI 답변: 한국어 전용 지침 대폭 강화
 def get_stock_brief(stock_name):
-    if not client: return "AI 연결 필요"
+    if not client: return "AI 분석 대기 중..."
     try:
-        prompt = (f"{stock_name}의 상승 이슈를 '최근 [이슈]로 인한 [테마] 테마에 속해서 상승 중입니다' 형식으로 한국어로만 답변하세요.")
-        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "한국어 전용 주식 전문가입니다."}, {"role": "user", "content": prompt}], temperature=0.1)
+        prompt = (f"당신은 주식 전문가입니다. {stock_name}의 최근 이슈를 분석하여 "
+                  f"'최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 답변하세요. "
+                  f"반드시 모든 단어와 문장은 한국어로만 작성하고, 한자나 일본어는 절대 섞지 마세요.")
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "답변은 반드시 100% 한국어로만 작성하세요. 중국어(什么 등), 일본어는 금지입니다."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1 # 답변의 일관성을 위해 온도를 더 낮춤
+        )
         return res.choices[0].message.content
-    except: return "분석 로딩 중..."
+    except: return "분석 업데이트 중..."
 
-# 5) 메인 레이아웃 실행
+# 차트 그리기
+def draw_compact_finance_chart(dates, values, unit, is_debt=False):
+    display_values = values / 100000000 if "억" in unit else values
+    fig = go.Figure()
+    fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1)
+    line_color = "#00e5ff" if (not is_debt and display_values[-1] > 0) or (is_debt and display_values[-1] < display_values[0]) else "#ff3366"
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=display_values, mode='lines+markers+text',
+        text=[f"{v:,.0f}{unit}" for v in display_values],
+        textposition="top center", textfont=dict(color="white", size=10),
+        line=dict(color=line_color, width=3),
+        marker=dict(size=8, color=line_color, line=dict(color='white', width=1))
+    ))
+    fig.update_layout(
+        template="plotly_dark", height=220, 
+        margin=dict(l=10, r=10, t=0, b=5), # 헤더 박스에 바짝 밀착
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False),
+        showlegend=False
+    )
+    return fig
+
+# 4) 메인 레이아웃 (3분할 사령부)
 if data is not None:
+    if "messages" not in st.session_state: st.session_state.messages = []
     if "selected_stock" not in st.session_state:
         st.session_state.selected_stock = data.iloc[0].to_dict()
-        st.session_state.messages = []
-        ticker = st.session_state.selected_stock['종목코드'] + (".KS" if "KOSPI" in st.session_state.selected_stock['시장'] else ".KQ")
-        prob, desc = get_robust_rise_probability(ticker, st.session_state.selected_stock['종목명'])
-        st.session_state.prob, st.session_state.prob_desc = prob, desc
         st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
 
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
+    # [1] 왼쪽 리스트
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=850):
             m_col1, m_col2 = st.columns(2)
-            for m_df, m_name, m_key in [(data[data["시장"].str.contains("KOSPI", na=False)], "KOSPI", "k"), (data[data["시장"].str.contains("KOSDAQ", na=False)], "KOSDAQ", "q")]:
+            for m_df, m_name, m_key in [(data[data["시장"].str.contains("KOSPI", na=False)], "KOSPI", "k"), 
+                                        (data[data["시장"].str.contains("KOSDAQ", na=False)], "KOSDAQ", "q")]:
                 with (m_col1 if m_name=="KOSPI" else m_col2):
                     st.markdown(f'<div class="market-header">{m_name}</div>', unsafe_allow_html=True)
                     for i, row in m_df.iterrows():
-                        if st.button(f"● {row['종목명']}" if st.session_state.selected_stock['종목명'] == row['종목명'] else f"  {row['종목명']}", key=f"{m_key}_{i}"):
+                        is_sel = st.session_state.selected_stock['종목명'] == row['종목명']
+                        if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
                             st.session_state.selected_stock = row.to_dict()
                             st.session_state.messages = []
-                            with st.spinner("AI 확률 분석 중..."):
-                                ticker = row['종목코드'] + (".KS" if "KOSPI" in row['시장'] else ".KQ")
-                                prob, desc = get_robust_rise_probability(ticker, row['종목명'])
-                                st.session_state.prob, st.session_state.prob_desc = prob, desc
+                            with st.spinner("AI 분석 엔진 가동 중..."):
                                 st.session_state.current_brief = get_stock_brief(row['종목명'])
                             st.rerun()
 
+    # [2] 가운데 분석실
     with col_main:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
@@ -154,49 +167,68 @@ if data is not None:
             fig_candle = go.Figure(data=[go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], low=chart_df['Low'], close=chart_df['Close'], increasing_line_color='#00e5ff', decreasing_line_color='#ff3366')])
             fig_candle.update_layout(template="plotly_dark", height=320, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig_candle, use_container_width=True)
+            
             income = ticker_data.financials.loc['Operating Income'].sort_index() if 'Operating Income' in ticker_data.financials.index else None
             debt = (ticker_data.balance_sheet.loc['Total Debt'] / ticker_data.balance_sheet.loc['Stockholders Equity'] * 100).sort_index() if 'Total Debt' in ticker_data.balance_sheet.index else None
         except: income, debt = None, None
 
-        # 테마 브리핑
-        st.markdown(f'<div class="report-box"><div class="info-line"><span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock["종목코드"]}) | <span class="highlight-mint">거래대금:</span> {stock.get("거래대금(억)", 0):,}억</div>'
-                    f'<div class="theme-line"><span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.current_brief}</div></div>', unsafe_allow_html=True)
-
-        # [핵심] 통합 분석 영역: AI가 산출한 확률 숫자 표시
         st.markdown(f"""
-        <div class="wide-analysis-box">
-            <span class="analysis-title">🎯 AI 익일 주가 상승 확률 분석</span>
-            <div class="prob-value">{st.session_state.prob}%</div>
-            <div class="prob-desc">{st.session_state.prob_desc}</div>
+        <div class="report-box">
+            <div class="info-line">
+                <span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; 
+                <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; 
+                <span class="highlight-mint">거래대금:</span> {stock.get('거래대금(억)', 0):,}억
+            </div>
+            <div class="theme-line">
+                <span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.get('current_brief', '로딩 중...')}
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # 재무제표 (타이틀 헤더 박스 적용)
-        f_col1, f_col2 = st.columns(2)
-        for col, title, d_s, unit, is_d in [(f_col1, "💰 연간 영업이익 추이", income, "억", False), (f_col2, "📉 연간 부채비율 추이", debt, "%", True)]:
-            with col:
-                st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
-                st.markdown(f'<div class="finance-header-box"><span class="finance-label-compact">{title}</span></div>', unsafe_allow_html=True)
-                if d_s is not None:
-                    vals = d_s.values / 100000000 if unit == "억" else d_s.values
-                    fig = go.Figure()
-                    fig.add_hline(y=0, line_dash="dash", line_color="white")
-                    line_c = "#00e5ff" if (not is_d and vals[-1] > 0) or (is_d and vals[-1] < vals[0]) else "#ff3366"
-                    fig.add_trace(go.Scatter(x=d_s.index.strftime('%Y'), y=vals, mode='lines+markers+text', text=[f"{v:,.0f}{unit}" for v in vals], textposition="top center", line=dict(color=line_c, width=3), marker=dict(size=8, color=line_c, line=dict(color='white', width=1))))
-                    fig.update_layout(template="plotly_dark", height=180, margin=dict(l=10, r=10, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False), showlegend=False)
-                    st.plotly_chart(fig, use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+        # [C] 통합 분석 영역
+        st.markdown(f"""
+        <div class="wide-analysis-box">
+            <span class="analysis-title">🎯 AI 내일 상승 확률 및 분석 리포트</span>
+            <div class="probability-text">익일 상승 확률 분석 대기 중... (차트 패턴 및 수급 분석 포함)</div>
+            <div style="background-color: rgba(0, 229, 255, 0.1); color: #00e5ff; padding: 8px 20px; border-radius: 20px; display: inline-block; margin-top: 15px; font-weight: 800; font-size: 1.1rem;">데이터 산출 중</div>
+        </div>
+        """, unsafe_allow_html=True)
 
+        # [D] 재무제표 차트 (헤더 박스 디자인 적용)
+        f_col1, f_col2 = st.columns(2)
+        with f_col1:
+            st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
+            st.markdown('<div class="finance-header-box"><span class="finance-label-compact">💰 연간 영업이익 추이</span></div>', unsafe_allow_html=True)
+            if income is not None: st.plotly_chart(draw_compact_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
+            else: st.info("데이터 없음")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+        with f_col2:
+            st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
+            st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 추이</span></div>', unsafe_allow_html=True)
+            if debt is not None: st.plotly_chart(draw_compact_finance_chart(debt.index.strftime('%Y'), debt.values, "%", is_debt=True), use_container_width=True)
+            else: st.info("데이터 없음")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # [3] 오른쪽 AI 비서 (한국어 전용 지침 적용)
     with col_chat:
-        st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
         chat_container = st.container(height=720)
         with chat_container:
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]): st.markdown(f"<div style='font-size:1.1rem; color:white;'>{m['content']}</div>", unsafe_allow_html=True)
-        if prompt := st.chat_input("위 확률의 구체적 근거를 물어보세요."):
+        
+        if prompt := st.chat_input("분석 리포트에 대해 궁금한 점을 물어보세요."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with chat_container: st.chat_message("user").write(prompt)
+            with chat_container:
+                with st.chat_message("user"): st.write(prompt)
             if client:
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "한국 주식 전문가입니다. 반드시 한국어로만 답변하세요."}] + st.session_state.messages[-5:], temperature=0.1)
-                st.session_state.messages.append({"role": "assistant", "content": res.choices[0].message.content})
+                # [수정] AI 비서에게 가장 강력한 한국어 답변 페르소나 부여
+                history = [
+                    {"role": "system", "content": f"당신은 {stock['종목명']} 전문 AI 비서입니다. 반드시 100% 한국어로만 답변하세요. 일본어(日本語), 중국어(中文) 등 외국어는 절대 사용하지 마세요. 한국어를 모국어로 사용하는 사람처럼 자연스럽게 대답하세요."}
+                ]
+                for m in st.session_state.messages[-5:]: history.append(m)
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history, temperature=0.2)
+                ans = res.choices[0].message.content
+                st.session_state.messages.append({"role": "assistant", "content": ans})
             st.rerun()
