@@ -10,12 +10,12 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님의 시그니처 디자인 유지)
+# 2) 디자인 CSS (찬희님 요청: 타이틀 하단 배치 및 분석 박스 확장)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
     
-    /* 3분할 카드 디자인 */
+    /* 3분할 카드 디자인: 내부 요소 간격을 좁게 유지 */
     [data-testid="stHorizontalBlock"] > div {
         background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
         display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
@@ -43,20 +43,29 @@ st.markdown("""
     .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     
-    /* 통합 분석 영역 박스 */
+    /* [수정] 통합 분석 영역 박스: 높이를 키우고 내용을 중앙 정렬 */
     .wide-analysis-box {
         background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
-        padding: 20px; margin-bottom: 20px; text-align: center;
+        padding: 30px; /* 패딩 증가 */
+        margin-bottom: 20px; text-align: center;
+        min-height: 250px; /* 최소 높이를 크게 설정하여 영역 확장 */
+        display: flex; flex-direction: column; justify-content: center; align-items: center;
     }
-    .analysis-title { color: #00e5ff; font-size: 1.1rem; font-weight: 800; margin-bottom: 10px; display: block; }
-    .probability-text { color: #ffffff; font-size: 1rem; font-weight: 600; }
+    .analysis-title { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 15px; display: block; }
+    .probability-text { color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; }
     
-    /* 재무제표 카드 영역 */
+    /* [수정] 재무제표 카드 영역: 상단 패딩 줄임 */
     .finance-card-compact {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px;
-        padding: 15px; margin-top: 5px; min-height: 320px;
+        padding: 10px 15px 15px 15px; /* 상단 패딩 축소 */
+        margin-top: 5px; min-height: 300px;
+        display: flex; flex-direction: column; justify-content: flex-end; /* 요소들을 아래로 배치 */
     }
-    .finance-label-compact { color: #8b949e; font-size: 0.95rem; font-weight: 700; margin-bottom: 0px; }
+    /* [수정] 재무제표 라벨: 차트 아래로 가므로 상단 마진 추가 */
+    .finance-label-compact { 
+        color: #8b949e; font-size: 0.95rem; font-weight: 700; 
+        margin-top: 15px; margin-bottom: 5px; text-align: center;
+    }
 
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
     </style>
@@ -85,29 +94,26 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [핵심 수정] 영역 차트(Area Chart) 스타일 적용 함수
+# [수정] 영역 채우기 제거 및 마커 복구 (선 차트로 회귀)
 def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1)
     
-    # 색상 설정 (민트/핑크)
     line_color = "#00e5ff" if (not is_debt and display_values[-1] > 0) or (is_debt and display_values[-1] < display_values[0]) else "#ff3366"
-    # 채우기 색상 (반투명 그라데이션 효과)
-    fill_color = f"rgba({int(line_color[1:3], 16)}, {int(line_color[3:5], 16)}, {int(line_color[5:7], 16)}, 0.2)"
 
     fig.add_trace(go.Scatter(
         x=dates, y=display_values,
-        mode='lines+text', # 마커 제거, 선과 텍스트만 표시
-        fill='tozeroy', # 0선까지 영역 채우기
-        fillcolor=fill_color, # 반투명 색상 적용
+        mode='lines+markers+text', # 마커 다시 추가
+        # fill='tozeroy',  <-- 영역 채우기 제거
         text=[f"{v:,.0f}{unit}" for v in display_values],
         textposition="top center", textfont=dict(color="white", size=10),
-        line=dict(color=line_color, width=3) # 선 두께 및 색상
+        line=dict(color=line_color, width=3),
+        marker=dict(size=8, color=line_color, line=dict(color='white', width=1)) # 마커 스타일링
     ))
     fig.update_layout(
         template="plotly_dark", height=220, 
-        margin=dict(l=10, r=10, t=0, b=10), # 상단 여백 제거
+        margin=dict(l=10, r=10, t=20, b=10), # 타이틀이 아래로 가서 상단 여백 약간 확보
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False, tickfont=dict(color="#8b949e")),
         yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False, tickfont=dict(color="#8b949e")),
@@ -174,27 +180,33 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # [C] 통합 분석 영역
+        # [C] 통합 분석 영역 (높이 확장됨)
         st.markdown(f"""
         <div class="wide-analysis-box">
             <span class="analysis-title">🎯 AI 내일 상승 확률 및 분석 리포트</span>
             <div class="probability-text">익일 상승 확률 분석 대기 중... (차트 패턴 및 수급 분석 포함)</div>
-            <div style="background-color: rgba(0, 229, 255, 0.1); color: #00e5ff; padding: 5px 15px; border-radius: 20px; display: inline-block; margin-top: 10px; font-weight: 800;">데이터 산출 중</div>
+            <div style="background-color: rgba(0, 229, 255, 0.1); color: #00e5ff; padding: 8px 20px; border-radius: 20px; display: inline-block; margin-top: 15px; font-weight: 800; font-size: 1.1rem;">데이터 산출 중</div>
         </div>
         """, unsafe_allow_html=True)
 
-        # [D] 재무제표 차트 (영역 차트 적용)
+        # [D] 재무제표 차트 (타이틀 하단 배치)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
-            st.markdown('<div class="finance-card-compact"><div class="finance-label-compact">💰 연간 영업이익 추이</div>', unsafe_allow_html=True)
+            st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
+            # 차트 먼저 출력
             if income is not None: st.plotly_chart(draw_compact_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
             else: st.info("데이터 없음")
+            # 타이틀을 차트 아래로 내림
+            st.markdown('<div class="finance-label-compact">💰 연간 영업이익 추이</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
         with f_col2:
-            st.markdown('<div class="finance-card-compact"><div class="finance-label-compact">📉 연간 부채비율 추이</div>', unsafe_allow_html=True)
+            st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
+            # 차트 먼저 출력
             if debt is not None: st.plotly_chart(draw_compact_finance_chart(debt.index.strftime('%Y'), debt.values, "%", is_debt=True), use_container_width=True)
             else: st.info("데이터 없음")
+            # 타이틀을 차트 아래로 내림
+            st.markdown('<div class="finance-label-compact">📉 연간 부채비율 추이</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
     # [3] 오른쪽 AI 비서
