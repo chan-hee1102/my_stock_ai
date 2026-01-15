@@ -9,7 +9,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (블랙 & 민트 디자인 유지)
+# 2) 디자인 CSS (블랙 & 민트 테마 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,7 +34,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 로직
+# 3) 데이터 로드 (outputs 폴더의 CSV 파일)
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -52,10 +52,12 @@ def load_data():
 
 data, data_date = load_data()
 
+# 세션 상태 초기화
 if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
 
+# Gemini 클라이언트 설정
 def get_client():
     key = st.secrets.get("GEMINI_API_KEY")
     if not key: return None
@@ -63,7 +65,7 @@ def get_client():
 
 client = get_client()
 
-# 4) 메인 레이아웃
+# 4) 메인 레이아웃 구성
 if data is not None:
     col_list, col_chat = st.columns([2, 8])
 
@@ -81,15 +83,15 @@ if data is not None:
 
     with col_chat:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 분석</div>', unsafe_allow_html=True)
         
         chat_container = st.container(height=700)
         with chat_container:
             st.markdown(f"""
             <div class="report-box"><div class="report-text">
-                <span class="highlight-mint">● 분석 대상:</span> {stock["종목명"]}<br>
-                <span class="highlight-mint">● 엔진:</span> Gemini 2.0 Flash (최신 고성능)<br>
-                <span class="highlight-mint">● 기능:</span> 실시간 구글 검색 및 심층 추론 리포트 작성
+                <span class="highlight-mint">● 타겟:</span> {stock["종목명"]} ({stock.get('종목코드', 'N/A')})<br>
+                <span class="highlight-mint">● 엔진:</span> Gemini 2.0 Flash (Search Enhanced)<br>
+                <span class="highlight-mint">● 상태:</span> 실시간 구글 검색 및 대화 기록 분석 중
             </div></div>
             """, unsafe_allow_html=True)
 
@@ -97,51 +99,52 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        if prompt := st.chat_input(f"{stock['종목명']}에 대해 궁금한 점을 물어보세요!"):
+        # --- AI 대답 생성 로직 (응답 보장 강화 버전) ---
+        if prompt := st.chat_input(f"{stock['종목명']}의 최근 호재나 리스크는 뭐야?"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                with st.status("AI 커맨더가 분석 중입니다...", expanded=True) as status:
+                with st.status("AI 분석가가 정보를 찾는 중...", expanded=True) as status:
                     try:
-                        st.write("🔍 실시간 데이터 검색 및 분석 중...")
-                        history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
+                        # 맥락 유지 (최근 5개 대화)
+                        history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-5:]])
                         
-                        # 지침 강화
                         instruction = (
-                            f"당신은 주식 분석 전문가입니다. 종목명: {stock['종목명']}\n"
-                            f"지침: 구글 검색을 통해 최신 정보를 확인하고, 구체적인 수치와 함께 투자 전략을 제안하세요.\n"
-                            f"답변은 반드시 한국어로 작성하며 가독성 좋게 출력하세요."
+                            f"당신은 금융 전문가입니다. 종목: {stock['종목명']}. 오늘: {datetime.now().strftime('%Y-%m-%d')}\n"
+                            f"반드시 '구글 검색'으로 실시간 소식을 먼저 확인하고 답변하세요.\n"
+                            f"분석 내용이 없더라도 '검색 결과가 없습니다'라고 명확히 대답하세요."
                         )
-                        
-                        # 모델명을 gemini-2.0-flash로 변경 (가장 안정적)
+
+                        # 응답을 끝까지 기다리도록 설정
                         response = client.models.generate_content(
                             model="gemini-2.0-flash", 
-                            contents=f"{instruction}\n\n사용자 질문: {prompt}",
+                            contents=f"{instruction}\n\n질문: {prompt}\n맥락: {history}",
                             config=types.GenerateContentConfig(
-                                tools=[types.Tool(google_search=types.GoogleSearch())]
+                                tools=[types.Tool(google_search=types.GoogleSearch())],
+                                temperature=0.2 # 답변의 정확도를 높이기 위해 낮게 설정
                             )
                         )
                         
-                        # 응답 추출 로직 강화
-                        response_text = ""
-                        try:
-                            if response.text:
-                                response_text = response.text
-                            else:
-                                for part in response.candidates[0].content.parts:
-                                    if part.text: response_text += part.text
-                        except:
-                            response_text = "⚠️ 검색 결과를 정리하는 중 오류가 발생했습니다. 다시 질문해 주시겠습니까?"
+                        # 응답 텍스트 추출 (여러 파트가 있을 경우 합침)
+                        final_text = ""
+                        if response.candidates:
+                            for part in response.candidates[0].content.parts:
+                                if part.text:
+                                    final_text += part.text
+                        
+                        # 예외 처리: 답변이 비어있는 경우
+                        if not final_text:
+                            final_text = "⚠️ 구글 검색 결과를 정리하는 데 시간이 지연되고 있습니다. 잠시 후 다시 질문해 주세요."
 
-                        status.update(label="✅ 분석 완료!", state="complete", expanded=False)
+                        status.update(label="✅ 분석이 완료되었습니다.", state="complete", expanded=False)
                         with st.chat_message("assistant"):
-                            st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{response_text}</div>", unsafe_allow_html=True)
-                        st.session_state.messages.append({"role": "assistant", "content": response_text})
+                            st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{final_text}</div>", unsafe_allow_html=True)
+                        st.session_state.messages.append({"role": "assistant", "content": final_ans})
                     
                     except Exception as e:
-                        status.update(label="❌ 오류 발생", state="error", expanded=True)
-                        st.error(f"상세 오류: {str(e)}")
+                        status.update(label="❌ 연결 지연", state="error", expanded=True)
+                        st.error(f"다시 시도해 주세요: {str(e)}")
             
             st.rerun()
