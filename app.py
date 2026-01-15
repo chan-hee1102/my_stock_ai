@@ -169,19 +169,19 @@ if data is not None:
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
                                                      increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 
-                # [주요 수정] 글씨 찐하게, 크기 확대, 그리드 투명도 조정
+                # [수정] 폰트 두께 최적화 (Arial Black -> Arial)
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
                     yaxis=dict(
                         tickformat=",d", 
-                        tickfont=dict(size=13, color='#ffffff', family="Arial Black"), # 더 크고 찐한 흰색
-                        gridcolor='rgba(255, 255, 255, 0.07)' # 그리드 투명도 강화 (더 흐릿하게)
+                        tickfont=dict(size=13, color='#ffffff', family="Arial"), # 살짝 얇고 깔끔하게
+                        gridcolor='rgba(255, 255, 255, 0.07)'
                     ),
                     xaxis=dict(
                         tickformat="%m.%d", 
-                        tickfont=dict(size=13, color='#ffffff', family="Arial Black"), # 더 크고 찐한 흰색
-                        gridcolor='rgba(255, 255, 255, 0.07)' # 그리드 투명도 강화
+                        tickfont=dict(size=13, color='#ffffff', family="Arial"), # 살짝 얇고 깔끔하게
+                        gridcolor='rgba(255, 255, 255, 0.07)'
                     )
                 )
                 st.plotly_chart(fig, use_container_width=True)
