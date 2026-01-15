@@ -8,7 +8,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님의 시그니처 블랙 & 민트 디자인 유지)
+# 2) 디자인 CSS (임찬희님의 시그니처 블랙 & 민트 디자인)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -20,16 +20,16 @@ st.markdown("""
         margin-bottom: 20px; border-left: 6px solid #00e5ff; padding-left: 15px; 
     }
     .market-header {
-        background-color: #0d1117; color: #8b949e; font-size: 0.9rem; font-weight: 800;
-        text-align: center; padding: 8px; border-radius: 8px; margin-bottom: 15px;
-        border: 1px solid #30363d; letter-spacing: 1px;
+        background-color: #0d1117; color: #8b949e; font-size: 0.85rem; font-weight: 800;
+        text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 12px;
+        border: 1px solid #30363d; letter-spacing: 0.5px;
     }
     .stButton > button {
         width: 100% !important; background-color: transparent !important; color: #ffffff !important;
-        border: none !important; font-size: 1.05rem !important; font-weight: 500 !important;
-        text-align: left !important; padding: 6px 0px !important; transition: 0.2s;
+        border: none !important; font-size: 0.95rem !important; font-weight: 500 !important;
+        text-align: left !important; padding: 5px 0px !important; transition: 0.2s;
     }
-    .stButton > button:hover { color: #00e5ff !important; transform: translateX(5px); }
+    .stButton > button:hover { color: #00e5ff !important; transform: translateX(4px); }
     .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
     .report-text { color: #e0e6ed !important; font-size: 1.15rem !important; line-height: 1.8; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
@@ -38,7 +38,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 및 전처리
+# 3) 데이터 로드 로직
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -53,8 +53,6 @@ def load_data():
         date_str = datetime.now().strftime('%Y-%m-%d')
         
     df = pd.read_csv(os.path.join(out_dir, latest_file))
-    
-    # 데이터 클리닝: '시장' 컬럼의 공백 제거 및 대문자 통일 (정확한 필터링을 위해 필수)
     if "시장" in df.columns:
         df["시장"] = df["시장"].astype(str).str.strip().str.upper()
     if "종목코드" in df.columns: 
@@ -74,20 +72,21 @@ def get_groq_client():
 
 client = get_groq_client()
 
-# 4) 메인 레이아웃 및 시장 분류
+# 4) 메인 레이아웃 구성
 if data is not None:
-    # --- 정확한 시장별 데이터 필터링 ---
+    # 시장별 데이터 필터링
     df_kospi = data[data["시장"] == "KOSPI"].copy()
     df_kosdaq = data[data["시장"] == "KOSDAQ"].copy()
 
-    col_list, col_chat = st.columns([3.5, 6.5])
+    # 핵심 변경 포인트: 사이드바 영역을 2.5로 축소
+    col_list, col_chat = st.columns([2.5, 7.5])
 
+    # 왼쪽 종목 리스트 섹션
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=800):
             m_col1, m_col2 = st.columns(2)
             
-            # KOSPI 열 출력
             with m_col1:
                 st.markdown('<div class="market-header">KOSPI</div>', unsafe_allow_html=True)
                 for i, row in df_kospi.iterrows():
@@ -98,7 +97,6 @@ if data is not None:
                         st.session_state.messages = []
                         st.rerun()
             
-            # KOSDAQ 열 출력
             with m_col2:
                 st.markdown('<div class="market-header">KOSDAQ</div>', unsafe_allow_html=True)
                 for i, row in df_kosdaq.iterrows():
@@ -128,24 +126,16 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        if prompt := st.chat_input(f"{stock['종목명']}의 핵심 투자 포인트를 물어보세요!"):
+        if prompt := st.chat_input(f"{stock['종목명']}의 전망을 물어보세요!"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
                 with st.chat_message("user"):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                with st.status("전략 분석관 가동 중...", expanded=True) as status:
+                with st.status("분석 중...", expanded=True) as status:
                     try:
-                        history = [{
-                            "role": "system", 
-                            "content": (
-                                f"당신은 {stock['종목명']} 전문 주식 분석가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다.\n"
-                                f"1. 주식 용어는 영어로, 문장은 한국어로 답변하세요.\n"
-                                f"2. 일본어 접속사나 한자를 사용하지 마세요.\n"
-                                f"3. 가독성을 위해 불렛 포인트를 사용하세요."
-                            )
-                        }]
+                        history = [{"role": "system", "content": f"당신은 {stock['종목명']} 전문 주식 분석가입니다. 한국어로 답변하세요. 일본어 금지."}]
                         for m in st.session_state.messages[-10:]:
                             history.append({"role": m["role"], "content": m["content"]})
                         
@@ -153,10 +143,9 @@ if data is not None:
                             model="llama-3.3-70b-versatile",
                             messages=history,
                             temperature=0.7, 
-                            max_tokens=2048
                         )
                         ans = completion.choices[0].message.content
-                        status.update(label="✅ 분석 완료", state="complete", expanded=False)
+                        status.update(label="✅ 완료", state="complete", expanded=False)
                         with chat_container:
                             with st.chat_message("assistant"):
                                 st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{ans}</div>", unsafe_allow_html=True)
