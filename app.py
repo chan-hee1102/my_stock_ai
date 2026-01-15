@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 시그니처 디자인 유지)
+# 2) 디자인 CSS (임찬희님 시그니처 다크 모드 보존)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,6 +34,7 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
+    /* 수급표 디자인 */
     .investor-table {
         width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: center; color: #ffffff;
     }
@@ -63,7 +64,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 및 수급 데이터 크롤링
+# 3) 데이터 로드 및 수급 데이터 크롤링 함수
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -83,27 +84,29 @@ def load_data():
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
+    """네이버 금융 수급 데이터 수집 (크롤링 강화 버전)"""
     try:
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://finance.naver.com/'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': f'https://finance.naver.com/item/main.naver?code={code}'
         }
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        table = soup.find('table', {'class': 'type2'})
-        if not table: return None
         
-        rows = table.find_all('tr', {'onmouseover': 'mouseOver(this)'})
+        # 실제 데이터가 들어있는 테이블 행 포착
+        rows = soup.find_all('tr', {'onmouseover': 'mouseOver(this)'})
         data_list = []
         for row in rows[:5]:
             cols = row.find_all('td')
             if len(cols) < 9: continue
-            date = cols[0].text.strip()[5:] 
-            institution = int(cols[5].text.replace(',', '').strip())
-            foreigner = int(cols[6].text.replace(',', '').strip())
-            data_list.append({"날짜": date, "기관": institution, "외인": foreigner})
-        return pd.DataFrame(data_list)
+            
+            date = cols[0].text.strip()[-5:] # MM.DD
+            inst = int(cols[5].text.replace(',', '').strip())
+            fore = int(cols[6].text.replace(',', '').strip())
+            data_list.append({"날짜": date, "기관": inst, "외인": fore})
+            
+        return pd.DataFrame(data_list) if data_list else None
     except Exception:
         return None
 
@@ -125,7 +128,7 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [되돌림] 이미지 8ac8c6 스타일의 시각화 함수
+# [되돌림] 찬희님이 원하시는 Scatter 라인 차트 디자인 (image_8ac8c6 스타일)
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
@@ -193,16 +196,14 @@ if data is not None:
             except: turnover = 0
 
         with supply_col:
-            # [에러 해결] 데이터가 있을 때만 루프를 돌도록 수정
+            # 수급 데이터 렌더링 (안전 코드 적용)
             invest_df = get_investor_trend(stock['종목코드'])
             if invest_df is not None and not invest_df.empty:
                 html_code = '<table class="investor-table"><tr><th>날짜</th><th>외인</th><th>기관</th></tr>'
                 for _, r in invest_df.iterrows():
-                    f_val = r['외인']
-                    i_val = r['기관']
-                    f_cls = "val-plus" if f_val > 0 else "val-minus"
-                    i_cls = "val-plus" if i_val > 0 else "val-minus"
-                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{f_val:,}</td><td class="{i_cls}">{i_val:,}</td></tr>'
+                    f_cls = "val-plus" if r['외인'] > 0 else "val-minus"
+                    i_cls = "val-plus" if r['기관'] > 0 else "val-minus"
+                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{r["외인"]:,}</td><td class="{i_cls}">{r["기관"]:,}</td></tr>'
                 html_code += "</table>"
                 st.markdown(html_code, unsafe_allow_html=True)
             else:
@@ -223,20 +224,17 @@ if data is not None:
 
         st.markdown('<div class="wide-analysis-box"><span class="analysis-title">🎯 AI 내일 상승 확률</span><div class="probability-text">데이터 분석 중...</div></div>', unsafe_allow_html=True)
 
-        # 재무 차트 영역 (디자인 복구)
+        # 재무 차트 (디자인 복구 완료)
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
             debt = (tk.balance_sheet.loc['Total Debt'] / tk.balance_sheet.loc['Stockholders Equity'] * 100).sort_index()
-            
             with f_col1:
                 st.markdown('<div class="finance-header-box"><span class="finance-label-compact">💰 연간 영업이익 (억)</span></div>', unsafe_allow_html=True)
-                if income is not None:
-                    st.plotly_chart(draw_finance_chart(income.index.year, income.values, "억"), use_container_width=True)
+                if income is not None: st.plotly_chart(draw_finance_chart(income.index.year, income.values, "억"), use_container_width=True)
             with f_col2:
                 st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 (%)</span></div>', unsafe_allow_html=True)
-                if debt is not None:
-                    st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
+                if debt is not None: st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
     with col_chat:
