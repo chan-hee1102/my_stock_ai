@@ -163,19 +163,26 @@ if data is not None:
             ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
             try:
                 tk = yf.Ticker(ticker)
-                # 40봉 노출을 위해 넉넉히 가져온 후 tail(40) 처리
                 hist_full = tk.history(period="3mo")
                 hist = hist_full.tail(40)
                 
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
                                                      increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 
-                # [핵심 수정] Y축 가격 전체 표시 및 X축 날짜 숫자 형식
+                # [주요 수정] 글씨 찐하게, 크기 확대, 그리드 투명도 조정
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
-                    yaxis=dict(tickformat=",d"), # k 단위 제거 및 천단위 콤마
-                    xaxis=dict(tickformat="%m.%d") # 월.일 숫자 형식
+                    yaxis=dict(
+                        tickformat=",d", 
+                        tickfont=dict(size=13, color='#ffffff', family="Arial Black"), # 더 크고 찐한 흰색
+                        gridcolor='rgba(255, 255, 255, 0.07)' # 그리드 투명도 강화 (더 흐릿하게)
+                    ),
+                    xaxis=dict(
+                        tickformat="%m.%d", 
+                        tickfont=dict(size=13, color='#ffffff', family="Arial Black"), # 더 크고 찐한 흰색
+                        gridcolor='rgba(255, 255, 255, 0.07)' # 그리드 투명도 강화
+                    )
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 turnover = stock.get('최근거래일거래대금(억)', 0)
