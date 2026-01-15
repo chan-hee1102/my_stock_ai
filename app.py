@@ -10,12 +10,12 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님의 요청: 영역 재배치 및 차트 밀착)
+# 2) 디자인 CSS (임찬희님의 시그니처 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
     
-    /* 3분할 카드 디자인: 내부 요소 간격을 좁게 유지 */
+    /* 3분할 카드 디자인 */
     [data-testid="stHorizontalBlock"] > div {
         background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
         display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
@@ -43,7 +43,7 @@ st.markdown("""
     .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     
-    /* [찬희님 요청] 테마와 재무제표 사이의 '통합 분석 영역' */
+    /* 통합 분석 영역 박스 */
     .wide-analysis-box {
         background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
         padding: 20px; margin-bottom: 20px; text-align: center;
@@ -85,22 +85,29 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [완결 수정] 여백 0(t=0) 적용하여 제목 바로 아래에 붙이는 차트 함수
+# [핵심 수정] 영역 차트(Area Chart) 스타일 적용 함수
 def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1)
-    line_color = "#00e5ff" if (not is_debt and display_values[-1] > 0) or (is_debt and display_values[-1] < display_values[0]) else "#ff3366"
     
+    # 색상 설정 (민트/핑크)
+    line_color = "#00e5ff" if (not is_debt and display_values[-1] > 0) or (is_debt and display_values[-1] < display_values[0]) else "#ff3366"
+    # 채우기 색상 (반투명 그라데이션 효과)
+    fill_color = f"rgba({int(line_color[1:3], 16)}, {int(line_color[3:5], 16)}, {int(line_color[5:7], 16)}, 0.2)"
+
     fig.add_trace(go.Scatter(
-        x=dates, y=display_values, mode='lines+markers+text',
+        x=dates, y=display_values,
+        mode='lines+text', # 마커 제거, 선과 텍스트만 표시
+        fill='tozeroy', # 0선까지 영역 채우기
+        fillcolor=fill_color, # 반투명 색상 적용
         text=[f"{v:,.0f}{unit}" for v in display_values],
         textposition="top center", textfont=dict(color="white", size=10),
-        line=dict(color=line_color, width=3), marker=dict(size=8, color=line_color)
+        line=dict(color=line_color, width=3) # 선 두께 및 색상
     ))
     fig.update_layout(
         template="plotly_dark", height=220, 
-        margin=dict(l=10, r=10, t=0, b=10), # [핵심] 상단 여백 0으로 완전 제거
+        margin=dict(l=10, r=10, t=0, b=10), # 상단 여백 제거
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False, tickfont=dict(color="#8b949e")),
         yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False, tickfont=dict(color="#8b949e")),
@@ -108,7 +115,7 @@ def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     )
     return fig
 
-# 4) 세션 관리 및 메인 레이아웃 (3분할 사령부)
+# 4) 메인 레이아웃 (3분할 사령부)
 if data is not None:
     if "messages" not in st.session_state: st.session_state.messages = []
     if "selected_stock" not in st.session_state:
@@ -135,12 +142,12 @@ if data is not None:
                                 st.session_state.current_brief = get_stock_brief(row['종목명'])
                             st.rerun()
 
-    # [2] 가운데 분석실 (레이아웃 순서 전면 개편)
+    # [2] 가운데 분석실
     with col_main:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
-        # [A] 주가 캔들 차트 (상단)
+        # [A] 주가 캔들 차트
         ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
         try:
             ticker_data = yf.Ticker(ticker_symbol)
@@ -167,7 +174,7 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # [C] 찬희님 요청: 테마 분석과 재무제표 사이의 '통합 분석 영역'
+        # [C] 통합 분석 영역
         st.markdown(f"""
         <div class="wide-analysis-box">
             <span class="analysis-title">🎯 AI 내일 상승 확률 및 분석 리포트</span>
@@ -176,7 +183,7 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # [D] 재무제표 차트 (하단으로 배치하여 여백 문제 해결)
+        # [D] 재무제표 차트 (영역 차트 적용)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             st.markdown('<div class="finance-card-compact"><div class="finance-label-compact">💰 연간 영업이익 추이</div>', unsafe_allow_html=True)
