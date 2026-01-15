@@ -8,7 +8,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님의 시그니처 블랙 & 민트 디자인)
+# 2) 디자인 CSS (찬희님의 시그니처 블랙 & 민트 디자인)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -37,7 +37,6 @@ st.markdown("""
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
-    # 'final_result_'로 시작하는 가장 최신 CSV 파일 탐색
     files = [f for f in os.listdir(out_dir) if f.startswith("final_result_") and f.endswith(".csv")]
     if not files: return None, None
     latest_file = sorted(files)[-1]
@@ -61,7 +60,7 @@ if "messages" not in st.session_state:
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
 
-# Groq 클라이언트 설정 (secrets.toml에서 관리)
+# Groq 클라이언트 설정
 def get_groq_client():
     key = st.secrets.get("GROQ_API_KEY")
     if not key: return None
@@ -73,7 +72,6 @@ client = get_groq_client()
 if data is not None:
     col_list, col_chat = st.columns([2, 8])
 
-    # 왼쪽 종목 리스트 섹션
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착 종목</div>', unsafe_allow_html=True)
         with st.container(height=850):
@@ -82,51 +80,57 @@ if data is not None:
                 display_name = f"▶ {row['종목명']} ◀" if is_selected else f"  {row['종목명']}"
                 if st.button(display_name, key=f"stock_btn_{i}"):
                     st.session_state.selected_stock = row.to_dict()
-                    st.session_state.messages = [] # 종목 변경 시 대화 리셋
+                    st.session_state.messages = []
                     st.rerun()
                 st.markdown("<hr style='margin:5px 0; border:0.5px solid #30363d; opacity:0.3;'>", unsafe_allow_html=True)
 
-    # 오른쪽 채팅 리포트 섹션
     with col_chat:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트</div>', unsafe_allow_html=True)
         
-        # 고정 요약 정보 박스
         st.markdown(f"""
         <div class="report-box"><div class="report-text">
             <span class="highlight-mint">● 분석 대상:</span> {stock["종목명"]} ({stock.get('종목코드', '000000')})<br>
-            <span class="highlight-mint">● AI 엔진:</span> Llama-3.3-70B (High-Speed Inference)<br>
-            <span class="highlight-mint">● 상태:</span> Groq 초고속 엔진 및 대화 기록 반영 중
+            <span class="highlight-mint">● AI 엔진:</span> Llama-3.3-70B (Versatile Mode)<br>
+            <span class="highlight-mint">● 설정:</span> 한국어 베이스 + 주식 전문 영어 단어 혼용 모드
         </div></div>
         """, unsafe_allow_html=True)
 
-        # 채팅 메시지 표시 영역
         chat_container = st.container(height=650)
         with chat_container:
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # 사용자 입력 및 응답 로직
-        if prompt := st.chat_input(f"{stock['종목명']}에 대해 자유롭게 대화해보세요!"):
+        if prompt := st.chat_input(f"{stock['종목명']}의 전망을 물어보세요!"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
                 with st.chat_message("user"):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                with st.status("AI 분석관이 데이터 검토 중...", expanded=True) as status:
+                with st.status("AI 전략가가 분석 리포트를 작성 중입니다...", expanded=True) as status:
                     try:
-                        # 대화 맥락 포함 (최근 10개 대화)
-                        history = [{"role": "system", "content": f"당신은 {stock['종목명']} 전문 주식 전략가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다. 한국어로 답변하세요."}]
+                        # --- 지침 수정: 영어 단어 허용하되 일본어는 금지 ---
+                        history = [{
+                            "role": "system", 
+                            "content": (
+                                f"당신은 {stock['종목명']} 전문 주식 분석가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다.\n"
+                                f"지침:\n"
+                                f"1. 주식 전문 용어, 기업명, 기술 용어는 **영문(English)**으로 적절히 섞어서 답변하세요.\n"
+                                f"2. 단, 문장의 구성과 베이스는 반드시 **한국어**여야 합니다.\n"
+                                f"3. 절대로 일본어 한자나 일본어 접속사(예: ただし, 藍色 등)를 사용하지 마세요.\n"
+                                f"4. 가독성을 위해 불렛 포인트나 수치 데이터를 적극 활용하세요."
+                            )
+                        }]
                         for m in st.session_state.messages[-10:]:
                             history.append({"role": m["role"], "content": m["content"]})
                         
-                        # API 호출 (2026년 기준 llama-3.3 모델 사용)
+                        # 2026년 기준 최적 모델
                         completion = client.chat.completions.create(
                             model="llama-3.3-70b-versatile",
                             messages=history,
-                            temperature=0.6,
+                            temperature=0.7, 
                             max_tokens=2048
                         )
                         
@@ -139,7 +143,7 @@ if data is not None:
                         st.session_state.messages.append({"role": "assistant", "content": response_text})
                     
                     except Exception as e:
-                        status.update(label="❌ 오류 발생", state="error", expanded=True)
-                        st.error(f"상세 오류: {str(e)}")
+                        status.update(label="❌ 분석 지연", state="error", expanded=True)
+                        st.error(f"오류 발생: {str(e)}")
             
             st.rerun()
