@@ -1,155 +1,201 @@
 # -*- coding: utf-8 -*-
-import os
-import time
-import random
-import requests
+import streamlit as st
 import pandas as pd
-from datetime import datetime
-from bs4 import BeautifulSoup
+import os
+import yfinance as yf
+import plotly.graph_objects as go
+import numpy as np
+from groq import Groq
+from datetime import datetime, timedelta
 
-# =========================
-# 1. 환경 설정 및 폴더 생성
-# =========================
-OUT_DIR = "outputs"
-if not os.path.exists(OUT_DIR):
-    os.makedirs(OUT_DIR)
+# 1) 페이지 설정
+st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# --- 원본 파라미터 유지 ---
-FULL_COUNT = 320
-VOL_RATIO_THRESHOLD = 5.0
-TURNOVER_MAX_20_THRESHOLD = 1000 * 1e8   # 1000억
-LAST_TURNOVER_THRESHOLD   = 50 * 1e8     # 50억
-SLOPE_LOOKBACK_DAYS = 5
-ICHIMOKU_TENKAN = 9
-ICHIMOKU_KIJUN  = 26
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 + 확률 박스 고도화)
+st.markdown("""
+    <style>
+    .stApp { background-color: #05070a; }
+    [data-testid="stHorizontalBlock"] > div {
+        background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
+        display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
+    }
+    .section-header { color: #00e5ff !important; font-size: 1.3rem !important; font-weight: 800; margin-bottom: 20px; border-left: 6px solid #00e5ff; padding-left: 15px; }
+    .market-header { background-color: #0d1117; color: #8b949e; font-size: 0.8rem; font-weight: 800; text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #30363d; }
+    .stButton > button { width: 100% !important; background-color: transparent !important; color: #ffffff !important; border: none !important; font-size: 0.9rem !important; text-align: left !important; padding: 4px 0px !important; }
+    .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
+    
+    /* 테마 및 분석 박스 스타일 */
+    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
+    .highlight-mint { color: #00e5ff !important; font-weight: 800; }
+    
+    /* 통합 분석 영역 (가운데 웅장한 확률 박스) */
+    .wide-analysis-box {
+        background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
+        padding: 30px; margin-bottom: 20px; text-align: center; min-height: 260px;
+        display: flex; flex-direction: column; justify-content: center; align-items: center;
+    }
+    .prob-value { font-size: 4rem; font-weight: 900; color: #00e5ff; text-shadow: 0 0 30px rgba(0,229,255,0.5); margin: 5px 0; }
+    .prob-desc { color: #ffffff; font-size: 1.1rem; font-weight: 600; line-height: 1.5; margin-top: 10px; }
 
-# =========================
-# 2. 데이터 수집 함수 (시장 분류 로직 추가)
-# =========================
-def get_listing():
-    """KIND에서 코스피와 코스닥을 각각 가져와서 합치기"""
-    # 1. KOSPI (stockMkt) 가져오기
-    url = "https://kind.krx.co.kr/corpgeneral/corpList.do"
-    r_kospi = requests.get(url, params={"method": "download", "marketType": "stockMkt"})
-    df_kospi = pd.read_html(r_kospi.text, header=0)[0]
-    df_kospi["시장"] = "KOSPI" # 네이버의 '유가'를 KOSPI로 명확히 기록
+    /* 재무제표 헤더 박스 */
+    .finance-header-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 15px; margin-bottom: 5px; width: 100%; display: flex; align-items: center; }
+    .finance-label-compact { color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }
+    .finance-card-compact { background-color: transparent; padding: 0px; margin-top: 5px; min-height: auto !important; display: flex !important; flex-direction: column !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
-    # 2. KOSDAQ (kosdaqMkt) 가져오기
-    r_kosdaq = requests.get(url, params={"method": "download", "marketType": "kosdaqMkt"})
-    df_kosdaq = pd.read_html(r_kosdaq.text, header=0)[0]
-    df_kosdaq["시장"] = "KOSDAQ"
-
-    # 3. 데이터 합치기
-    df = pd.concat([df_kospi, df_kosdaq], ignore_index=True)
-    df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
-    return df
-
-def get_ohlcv(code):
-    """네이버 금융 XML API로 일봉 데이터 가져오기"""
-    url = "https://fchart.stock.naver.com/sise.nhn"
-    params = {"symbol": code, "timeframe": "day", "count": str(FULL_COUNT), "requestType": "0"}
-    headers = {"User-Agent": "Mozilla/5.0"}
+# 3) 정밀 백테스팅 & AI 확률 계산 엔진
+def get_rise_probability_ai(ticker_symbol, stock_name):
     try:
-        r = requests.get(url, params=params, headers=headers, timeout=5)
-        soup = BeautifulSoup(r.text, "lxml-xml")
-        items = soup.find_all("item")
-        if not items: return None
+        # 1. 과거 2년 데이터 수집
+        df = yf.download(ticker_symbol, period="2y", interval="1d", progress=False)
+        if len(df) < 50: return 50, "데이터 부족으로 기본 분석 수행"
+
+        # 2. 기술적 지표 계산 (간단한 AI 피처 엔지니어링)
+        df['MA20'] = df['Close'].rolling(window=20).mean()
+        df['Price_Change'] = df['Close'].pct_change()
+        df['Vol_MA'] = df['Volume'].rolling(window=20).mean()
         
-        rows = []
-        for it in items:
-            d = it["data"].split("|")
-            rows.append({
-                "Date": pd.to_datetime(d[0]),
-                "High": int(d[2]), "Low": int(d[3]),
-                "Close": int(d[4]), "Volume": int(d[5])
-            })
-        df = pd.DataFrame(rows).sort_values("Date").set_index("Date")
-        return df
+        # 3. 찬희님 로직(급등 포착) 시뮬레이션: 거래량 2배 이상 & 주가 상승일
+        signals = df[(df['Volume'] > df['Vol_MA'] * 2) & (df['Price_Change'] > 0.02)]
+        
+        success_count = 0
+        for i in range(len(signals)):
+            try:
+                current_idx = df.index.get_loc(signals.index[i])
+                if current_idx + 1 < len(df):
+                    next_day_change = df.iloc[current_idx + 1]['Close'] - df.iloc[current_idx]['Close']
+                    if next_day_change > 0: success_count += 1
+            except: continue
+        
+        hit_rate = (success_count / len(signals) * 100) if len(signals) > 0 else 50
+        
+        # 4. 최종 확률을 AI(Groq)에게 판단 요청 (하이브리드 방식)
+        if client:
+            current_price = df['Close'].iloc[-1]
+            last_change = df['Price_Change'].iloc[-1] * 100
+            prompt = (f"종목: {stock_name}\n"
+                      f"과거 2년간 동일 조건 포착 횟수: {len(signals)}회\n"
+                      f"포착 후 익일 상승 적중 횟수: {success_count}회\n"
+                      f"현재가: {current_price:,.0f}원 (전일 대비 {last_change:.2f}%)\n"
+                      f"위 통계 데이터를 바탕으로 내일 주가가 상승할 확률(%)을 숫자만 먼저 대답하고, "
+                      f"한 줄의 핵심 근거를 한국어로 덧붙이세요.")
+            
+            res = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "system", "content": "주식 데이터 분석 전문가입니다. 반드시 한국어로만 답변하세요."},
+                          {"role": "user", "content": prompt}],
+                temperature=0.1
+            )
+            ai_ans = res.choices[0].message.content
+            # 확률 숫자 추출 및 설명 분리
+            prob_val = "".join(filter(str.isdigit, ai_ans.split('\n')[0]))[:2]
+            prob_val = int(prob_val) if prob_val else int(hit_rate)
+            desc = ai_ans.split('\n')[-1]
+            return prob_val, desc
+        
+        return int(hit_rate), f"과거 {len(signals)}회 포착 중 {success_count}회 적중"
     except:
-        return None
+        return 50, "차트 모멘텀 분석 중"
 
-# =========================
-# 3. 조건 검증 함수 (원본 로직 완벽 반영)
-# =========================
-def check_all_conditions(df):
-    if df is None or len(df) < 260: return False
-    
-    c, v, h, l = df["Close"], df["Volume"], df["High"], df["Low"]
-    
-    # [조건 1] 거래대금 필터
-    turnover = c * v
-    if turnover.tail(20).max() < TURNOVER_MAX_20_THRESHOLD: return False
-    if turnover.iloc[-1] < LAST_TURNOVER_THRESHOLD: return False
-    
-    # [조건 2] 거래량 스파이크 (전일 또는 전전일 대비 5배)
-    r1 = v / v.shift(1)
-    r2 = v / v.shift(2)
-    if not ((r1.tail(20) >= VOL_RATIO_THRESHOLD) | (r2.tail(20) >= VOL_RATIO_THRESHOLD)).any():
-        return False
-    
-    # [조건 3] 이동평균선 정배열 (5 > 20 > 60) & 종가 > MA5
-    ma5 = c.rolling(5).mean()
-    ma20 = c.rolling(20).mean()
-    ma60 = c.rolling(60).mean()
-    if not (ma5.iloc[-1] > ma20.iloc[-1] > ma60.iloc[-1]): return False
-    if not (c.iloc[-1] > ma5.iloc[-1]): return False
-    
-    # [조건 4] 장기 이평선(120, 240) 우상향 기울기
-    ma120 = c.rolling(120).mean()
-    ma240 = c.rolling(240).mean()
-    lb = SLOPE_LOOKBACK_DAYS
-    if not (ma120.iloc[-1] > ma120.iloc[-(lb+1)] and ma240.iloc[-1] > ma240.iloc[-(lb+1)]):
-        return False
+# 4) 데이터 로드 및 앱 레이아웃
+def load_data():
+    out_dir = "outputs"
+    if not os.path.exists(out_dir): return None, None
+    files = [f for f in os.listdir(out_dir) if f.startswith("final_result_") and f.endswith(".csv")]
+    if not files: return None, None
+    latest_file = sorted(files)[-1]
+    df = pd.read_csv(os.path.join(out_dir, latest_file))
+    if "종목코드" in df.columns: df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+    return df, latest_file.split('_')[-1].replace('.csv', '')
+
+data, data_date = load_data()
+client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
+
+if data is not None:
+    if "selected_stock" not in st.session_state:
+        st.session_state.selected_stock = data.iloc[0].to_dict()
+        st.session_state.messages = []
+        with st.spinner("AI 사령부 초기화 중..."):
+            ticker = st.session_state.selected_stock['종목코드'] + (".KS" if "KOSPI" in st.session_state.selected_stock['시장'] else ".KQ")
+            prob, desc = get_rise_probability_ai(ticker, st.session_state.selected_stock['종목명'])
+            st.session_state.prob, st.session_state.prob_desc = prob, desc
+
+    col_list, col_main, col_chat = st.columns([2, 5, 3])
+
+    # [1] 왼쪽 리스트
+    with col_list:
+        st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
+        with st.container(height=850):
+            m_col1, m_col2 = st.columns(2)
+            for m_df, m_name, m_key in [(data[data["시장"].str.contains("KOSPI", na=False)], "KOSPI", "k"), (data[data["시장"].str.contains("KOSDAQ", na=False)], "KOSDAQ", "q")]:
+                with (m_col1 if m_name=="KOSPI" else m_col2):
+                    st.markdown(f'<div class="market-header">{m_name}</div>', unsafe_allow_html=True)
+                    for i, row in m_df.iterrows():
+                        if st.button(f"● {row['종목명']}" if st.session_state.selected_stock['종목명'] == row['종목명'] else f"  {row['종목명']}", key=f"{m_key}_{i}"):
+                            st.session_state.selected_stock = row.to_dict()
+                            st.session_state.messages = []
+                            with st.spinner("예측 엔진 계산 중..."):
+                                ticker = row['종목코드'] + (".KS" if "KOSPI" in row['시장'] else ".KQ")
+                                prob, desc = get_rise_probability_ai(ticker, row['종목명'])
+                                st.session_state.prob, st.session_state.prob_desc = prob, desc
+                            st.rerun()
+
+    # [2] 가운데 분석실
+    with col_main:
+        stock = st.session_state.selected_stock
+        st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
-    # [조건 5] 120일 신고가가 최근 20일 이내 발생
-    if c.tail(20).max() < c.tail(120).max(): return False
-    
-    # [조건 6] 일목균형표 (전환선 > 기준선 & 종가 > 전환선)
-    tenkan = (h.rolling(ICHIMOKU_TENKAN).max() + l.rolling(ICHIMOKU_TENKAN).min()) / 2
-    kijun = (h.rolling(ICHIMOKU_KIJUN).max() + l.rolling(ICHIMOKU_KIJUN).min()) / 2
-    if pd.isna(tenkan.iloc[-1]) or pd.isna(kijun.iloc[-1]): return False
-    if not (tenkan.iloc[-1] > kijun.iloc[-1] and c.iloc[-1] > tenkan.iloc[-1]): return False
-    
-    return True
+        # 캔들 차트
+        ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
+        try:
+            ticker_data = yf.Ticker(ticker_symbol)
+            chart_df = ticker_data.history(period="3mo")
+            fig_candle = go.Figure(data=[go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], low=chart_df['Low'], close=chart_df['Close'], increasing_line_color='#00e5ff', decreasing_line_color='#ff3366')])
+            fig_candle.update_layout(template="plotly_dark", height=320, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig_candle, use_container_width=True)
+            income = ticker_data.financials.loc['Operating Income'].sort_index() if 'Operating Income' in ticker_data.financials.index else None
+            debt = (ticker_data.balance_sheet.loc['Total Debt'] / ticker_data.balance_sheet.loc['Stockholders Equity'] * 100).sort_index() if 'Total Debt' in ticker_data.balance_sheet.index else None
+        except: income, debt = None, None
 
-# =========================
-# 4. 메인 실행 루프
-# =========================
-def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 상장 종목 스캔 시작...")
-    listing = get_listing()
-    results = []
-    
-    for i, row in listing.iterrows():
-        code, name, market = row["종목코드"], row["회사명"], row["시장"]
-        
-        df = get_ohlcv(code)
-        if check_all_conditions(df):
-            last_turnover = int(round((df["Close"].iloc[-1] * df["Volume"].iloc[-1]) / 1e8, 0))
-            results.append({
-                "종목코드": code,
-                "종목명": name,
-                "거래대금(억)": last_turnover,
-                "시장": market, # 수집 시 분류된 KOSPI 또는 KOSDAQ이 들어감
-                "현재가": df["Close"].iloc[-1]
-            })
-        
-        # 진행 상황 표시
-        time.sleep(random.uniform(0.02, 0.04))
-        if (i + 1) % 100 == 0:
-            print(f">>> {i+1}개 종목 분석 중... (현재 {len(results)}개 포착)")
+        # [핵심] 통합 분석 영역: AI 백테스팅 확률 표시
+        st.markdown(f"""
+        <div class="wide-analysis-box">
+            <span class="analysis-title">🎯 AI 익일 상승 확률 분석 리포트</span>
+            <div class="prob-value">{st.session_state.prob}%</div>
+            <div class="prob-desc">
+                {st.session_state.prob_desc}<br>
+                <span style="color: #8b949e; font-size: 0.85rem;">※ 과거 2년 데이터 기반 기술적 패턴 및 AI 추론 결과</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # 결과 저장
-    if results:
-        df_res = pd.DataFrame(results).sort_values("거래대금(억)", ascending=False).reset_index(drop=True)
-        date_str = datetime.now().strftime("%Y%m%d")
-        path = os.path.join(OUT_DIR, f"final_result_{date_str}.csv")
-        df_res.to_csv(path, index=False, encoding="utf-8-sig")
-        print("-" * 30)
-        print(f"✅ 스캔 완료! 통과 종목: {len(results)}개")
-        print(f"📂 결과 저장 위치: {path}")
-    else:
-        print("❌ 조건에 맞는 종목이 없습니다.")
+        # 재무제표 (헤더 박스 디자인)
+        f_col1, f_col2 = st.columns(2)
+        for col, title, d_s, unit, is_d in [(f_col1, "💰 연간 영업이익 추이", income, "억", False), (f_col2, "📉 연간 부채비율 추이", debt, "%", True)]:
+            with col:
+                st.markdown(f'<div class="finance-card-compact"><div class="finance-header-box"><span class="finance-label-compact">{title}</span></div>', unsafe_allow_html=True)
+                if d_s is not None:
+                    vals = d_s.values / 100000000 if unit == "억" else d_s.values
+                    fig = go.Figure()
+                    fig.add_hline(y=0, line_dash="dash", line_color="white")
+                    color = "#00e5ff" if (not is_d and vals[-1] > 0) or (is_d and vals[-1] < vals[0]) else "#ff3366"
+                    fig.add_trace(go.Scatter(x=d_s.index.strftime('%Y'), y=vals, mode='lines+markers+text', text=[f"{v:,.0f}{unit}" for v in vals], textposition="top center", line=dict(color=color, width=3), marker=dict(size=8, color=color)))
+                    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=10, r=10, t=0, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False), showlegend=False)
+                    st.plotly_chart(fig, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
+    # [3] 오른쪽 AI 비서
+    with col_chat:
+        st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
+        chat_container = st.container(height=720)
+        with chat_container:
+            for m in st.session_state.messages:
+                with st.chat_message(m["role"]): st.markdown(f"<div style='font-size:1.1rem; color:white;'>{m['content']}</div>", unsafe_allow_html=True)
+        if prompt := st.chat_input("위 분석 확률의 근거를 물어보세요."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with chat_container: st.chat_message("user").write(prompt)
+            if client:
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "한국 주식 전문가입니다. 반드시 한국어로만 자연스럽게 답변하세요."}] + st.session_state.messages[-5:])
+                st.session_state.messages.append({"role": "assistant", "content": res.choices[0].message.content})
+            st.rerun()
