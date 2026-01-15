@@ -24,13 +24,23 @@ ICHIMOKU_TENKAN = 9
 ICHIMOKU_KIJUN  = 26
 
 # =========================
-# 2. 데이터 수집 함수
+# 2. 데이터 수집 함수 (시장 분류 로직 추가)
 # =========================
 def get_listing():
-    """KIND에서 상장 종목 리스트 가져오기"""
+    """KIND에서 코스피와 코스닥을 각각 가져와서 합치기"""
+    # 1. KOSPI (stockMkt) 가져오기
     url = "https://kind.krx.co.kr/corpgeneral/corpList.do"
-    r = requests.get(url, params={"method": "download"})
-    df = pd.read_html(r.text, header=0)[0]
+    r_kospi = requests.get(url, params={"method": "download", "marketType": "stockMkt"})
+    df_kospi = pd.read_html(r_kospi.text, header=0)[0]
+    df_kospi["시장"] = "KOSPI" # 네이버의 '유가'를 KOSPI로 명확히 기록
+
+    # 2. KOSDAQ (kosdaqMkt) 가져오기
+    r_kosdaq = requests.get(url, params={"method": "download", "marketType": "kosdaqMkt"})
+    df_kosdaq = pd.read_html(r_kosdaq.text, header=0)[0]
+    df_kosdaq["시장"] = "KOSDAQ"
+
+    # 3. 데이터 합치기
+    df = pd.concat([df_kospi, df_kosdaq], ignore_index=True)
     df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
     return df
 
@@ -110,9 +120,8 @@ def main():
     listing = get_listing()
     results = []
     
-    # 전체 종목 순회 (테스트용으로 범위를 줄이려면 listing.head(100) 사용)
     for i, row in listing.iterrows():
-        code, name = row["종목코드"], row["회사명"]
+        code, name, market = row["종목코드"], row["회사명"], row["시장"]
         
         df = get_ohlcv(code)
         if check_all_conditions(df):
@@ -121,14 +130,14 @@ def main():
                 "종목코드": code,
                 "종목명": name,
                 "거래대금(억)": last_turnover,
-                "시장": "KOSPI/KOSDAQ", # 에러 방지를 위해 고정 텍스트로 변경
+                "시장": market, # 수집 시 분류된 KOSPI 또는 KOSDAQ이 들어감
                 "현재가": df["Close"].iloc[-1]
             })
         
-        # 서버 부하 방지 및 진행 상황 표시
-        time.sleep(random.uniform(0.02, 0.05))
+        # 진행 상황 표시
+        time.sleep(random.uniform(0.02, 0.04))
         if (i + 1) % 100 == 0:
-            print(f">>> {i+1}개 종목 분석 완료... (현재 {len(results)}개 통과)")
+            print(f">>> {i+1}개 종목 분석 중... (현재 {len(results)}개 포착)")
 
     # 결과 저장
     if results:
