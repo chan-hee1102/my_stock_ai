@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 시그니처 다크 모드 보존)
+# 2) 디자인 CSS (시그니처 다크 모드 보존 및 테이블 글씨 확대)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,14 +34,14 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    /* 수급표 디자인 */
+    /* 수급표 디자인 수정 (글씨 확대) */
     .investor-table {
-        width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: center; color: #ffffff;
+        width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff;
     }
-    .investor-table th { background-color: #0d1117; color: #8b949e; padding: 5px; border-bottom: 1px solid #30363d; }
-    .investor-table td { padding: 6px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; }
-    .val-plus { color: #ff3366; } 
-    .val-minus { color: #00e5ff; } 
+    .investor-table th { background-color: #0d1117; color: #8b949e; padding: 8px; border-bottom: 1px solid #30363d; }
+    .investor-table td { padding: 8px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; font-weight: 600; }
+    .val-plus { color: #ff3366; } /* 빨간색 (양수) */
+    .val-minus { color: #00e5ff; } /* 파란색 (음수) */
 
     .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
     .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
@@ -94,7 +94,6 @@ def get_investor_trend(code):
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 실제 데이터가 들어있는 테이블 행 포착
         rows = soup.find_all('tr', {'onmouseover': 'mouseOver(this)'})
         data_list = []
         for row in rows[:5]:
@@ -128,7 +127,7 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [되돌림] 찬희님이 원하시는 Scatter 라인 차트 디자인 (image_8ac8c6 스타일)
+# 재무 차트 시각화 함수
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
@@ -189,21 +188,23 @@ if data is not None:
             try:
                 tk = yf.Ticker(ticker)
                 hist = tk.history(period="3mo")
-                fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#00e5ff', decreasing_line_color='#ff3366')])
+                # [수정] 캔들 색상 변경: 양봉(빨강), 음봉(파랑)
+                fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 fig.update_layout(template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
                 turnover = stock.get('최근거래일거래대금(억)', 0)
             except: turnover = 0
 
         with supply_col:
-            # 수급 데이터 렌더링 (안전 코드 적용)
             invest_df = get_investor_trend(stock['종목코드'])
             if invest_df is not None and not invest_df.empty:
                 html_code = '<table class="investor-table"><tr><th>날짜</th><th>외인</th><th>기관</th></tr>'
                 for _, r in invest_df.iterrows():
-                    f_cls = "val-plus" if r['외인'] > 0 else "val-minus"
-                    i_cls = "val-plus" if r['기관'] > 0 else "val-minus"
-                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{r["외인"]:,}</td><td class="{i_cls}">{r["기관"]:,}</td></tr>'
+                    f_val = r['외인']
+                    i_val = r['기관']
+                    f_cls = "val-plus" if f_val > 0 else "val-minus"
+                    i_cls = "val-plus" if i_val > 0 else "val-minus"
+                    html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{f_val:,}</td><td class="{i_cls}">{i_val:,}</td></tr>'
                 html_code += "</table>"
                 st.markdown(html_code, unsafe_allow_html=True)
             else:
@@ -224,7 +225,7 @@ if data is not None:
 
         st.markdown('<div class="wide-analysis-box"><span class="analysis-title">🎯 AI 내일 상승 확률</span><div class="probability-text">데이터 분석 중...</div></div>', unsafe_allow_html=True)
 
-        # 재무 차트 (디자인 복구 완료)
+        # 재무 차트
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
