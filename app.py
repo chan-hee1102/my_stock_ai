@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (시인성 200% 강화)
+# 2) 디자인 CSS (사령부 스타일 강화)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -31,23 +31,17 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(4px); transition: 0.2s; }
     
-    /* 리포트 박스 - 가독성 핵심 */
+    /* [개선] 정보 박스 및 테마 텍스트 디자인 */
     .report-box { 
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; 
-        padding: 25px; margin-top: 15px; position: relative;
+        padding: 20px; margin-top: 15px;
     }
-    .info-label { color: #8b949e !important; font-weight: 600; font-size: 1.1rem; }
-    .info-value { color: #00e5ff !important; font-weight: 800; font-size: 1.1rem; margin-right: 20px; }
-    
-    /* 현재가 - 전광판 스타일 */
-    .price-display {
-        text-align: right; margin-top: -10px;
+    .info-line { color: #ffffff !important; font-size: 1.1rem; font-weight: 700; margin-bottom: 10px; }
+    .theme-line { 
+        color: #00e5ff !important; font-size: 1.05rem; font-weight: 800; 
+        border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px;
     }
-    .price-label { color: #8b949e !important; font-size: 1rem; font-weight: 600; }
-    .price-amount { 
-        color: #00e5ff !important; font-size: 2.2rem !important; font-weight: 900; 
-        text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
-    }
+    .highlight-mint { color: #00e5ff !important; }
     
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 15px !important; padding: 10px !important; }
     </style>
@@ -61,18 +55,33 @@ def load_data():
     if not files: return None, None
     latest_file = sorted(files)[-1]
     df = pd.read_csv(os.path.join(out_dir, latest_file))
-    if "시장" in df.columns:
-        df["시장"] = df["시장"].astype(str).str.strip().str.upper()
-    if "종목코드" in df.columns: 
-        df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+    if "시장" in df.columns: df["시장"] = df["시장"].astype(str).str.strip().str.upper()
+    if "종목코드" in df.columns: df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
     return df, latest_file.split('_')[-1].replace('.csv', '')
 
 data, data_date = load_data()
+
+# Groq 클라이언트
+client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
+
+# [신규] 종목 테마 분석 함수
+def get_stock_brief(stock_name):
+    if not client: return "AI 분석관 연결 실패"
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": f"당신은 한국 주식 전문가입니다. {stock_name}이 최근 어떤 테마에 속해있는지와 상승 사유를 한 문장으로만 브리핑하세요. '최근 ~테마에 속해서 ~중입니다' 형식을 유지하세요. 일본어 금지."}],
+            max_tokens=150, temperature=0.5
+        )
+        return response.choices[0].message.content
+    except:
+        return "데이터 분석 중 오류 발생"
 
 # 세션 상태 관리
 if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
+    st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
 
 # 4) 메인 레이아웃 (2.5:7.5)
 if data is not None:
@@ -92,6 +101,7 @@ if data is not None:
                     if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"k_{i}"):
                         st.session_state.selected_stock = row.to_dict()
                         st.session_state.messages = []
+                        st.session_state.current_brief = get_stock_brief(row['종목명']) # 테마 실시간 분석
                         st.rerun()
             with m_col2:
                 st.markdown('<div class="market-header">KOSDAQ</div>', unsafe_allow_html=True)
@@ -100,49 +110,42 @@ if data is not None:
                     if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"q_{i}"):
                         st.session_state.selected_stock = row.to_dict()
                         st.session_state.messages = []
+                        st.session_state.current_brief = get_stock_brief(row['종목명']) # 테마 실시간 분석
                         st.rerun()
 
     with col_chat:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">💬 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
         
-        # --- [성공한 차트 로직 적용] ---
-        ticker_suffix = ".KS" if "KOSPI" in stock['시장'] else ".KQ"
-        if "/" in stock['시장']: # 뭉쳐있는 경우 예외처리
-            ticker_suffix = ".KS" if stock['종목코드'].startswith('0') else ".KQ"
-        
-        ticker_symbol = stock['종목코드'] + ticker_suffix
+        # 차트 로직 (이전 성공 버전 유지)
+        suffix = ".KS" if "KOSPI" in stock['시장'] else ".KQ"
+        if "/" in stock['시장']: suffix = ".KS" if stock['종목코드'].startswith('0') else ".KQ"
+        ticker_symbol = stock['종목코드'] + suffix
 
         try:
             ticker_data = yf.Ticker(ticker_symbol)
             chart_df = ticker_data.history(period="3mo")
-            
             if not chart_df.empty:
                 fig = go.Figure(data=[go.Candlestick(
-                    x=chart_df.index,
-                    open=chart_df['Open'], high=chart_df['High'],
+                    x=chart_df.index, open=chart_df['Open'], high=chart_df['High'],
                     low=chart_df['Low'], close=chart_df['Close'],
                     increasing_line_color='#00e5ff', decreasing_line_color='#ff3366'
                 )])
-                fig.update_layout(
-                    template="plotly_dark", height=420, margin=dict(l=10, r=10, t=10, b=10),
-                    paper_bgcolor="#1c2128", plot_bgcolor="#1c2128",
-                    xaxis_rangeslider_visible=False,
-                    yaxis=dict(gridcolor='#30363d', tickfont=dict(color="#8b949e")),
-                    xaxis=dict(gridcolor='#30363d', tickfont=dict(color="#8b949e"))
-                )
+                fig.update_layout(template="plotly_dark", height=400, margin=dict(l=10, r=10, t=10, b=10),
+                                  paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
-        except:
-            st.info("데이터를 불러오는 중입니다...")
+        except: st.info("차트 데이터를 불러오는 중...")
 
-        # --- [시인성 개선된 정보 박스] ---
+        # --- [개선된 정보 박스: 거래대금 및 AI 테마 브리핑] ---
         st.markdown(f"""
         <div class="report-box">
-            <span class="info-label">분석 대상:</span> <span class="info-value">{stock["종목명"]} ({stock['종목코드']})</span>
-            <span class="info-label">시장:</span> <span class="info-value">{stock['시장']}</span>
-            <div class="price-display">
-                <span class="price-label">현재가:</span><br>
-                <span class="price-amount">{stock.get('현재가', 0):,}원</span>
+            <div class="info-line">
+                <span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;&nbsp;|&nbsp;&nbsp; 
+                <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;&nbsp;|&nbsp;&nbsp; 
+                <span class="highlight-mint">거래대금:</span> {stock.get('거래대금(억)', 0):,}억
+            </div>
+            <div class="theme-line">
+                🤖 AI 테마 브리핑: {st.session_state.get('current_brief', '분석 중...')}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -152,6 +155,6 @@ if data is not None:
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]): st.write(m["content"])
 
-        if prompt := st.chat_input(f"{stock['종목명']}에 대해 궁금한 점을 입력하세요."):
+        if prompt := st.chat_input(f"{stock['종목명']}의 세부 대응 전략을 요청하세요."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.rerun()
