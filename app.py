@@ -9,10 +9,8 @@ from bs4 import BeautifulSoup
 from groq import Groq
 from datetime import datetime
 
-# 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (투명도 완전 제거 버전)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -21,7 +19,7 @@ st.markdown("""
         display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
     }
     .section-header { 
-        color: #00e5ff !important; font-size: 1.3rem !important; font-weight: 800; 
+        color: #00e5ff !important; font-size: 1.1rem !important; font-weight: 800; 
         margin-bottom: 20px; border-left: 6px solid #00e5ff; padding-left: 15px; 
     }
     .market-header {
@@ -34,12 +32,12 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    /* 채팅창 글씨 투명도 해결 - 모든 자식 요소 강제 흰색 설정 */
     [data-testid="stChatMessage"] {
         background-color: #161b22 !important; 
         border: 1px solid #30363d !important;
         border-radius: 12px !important;
-        padding: 20px !important;
+        padding: 15px !important;
+        margin-bottom: 10px !important;
     }
     [data-testid="stChatMessage"] * {
         color: #ffffff !important;
@@ -47,7 +45,6 @@ st.markdown("""
         font-size: 1.0rem !important;
         line-height: 1.6 !important;
     }
-    /* 강조 글씨는 민트색으로 */
     [data-testid="stChatMessage"] strong {
         color: #00e5ff !important;
         font-weight: 800 !important;
@@ -114,13 +111,13 @@ def get_ai_expert_analysis(stock_name):
     if not client: return "AI 비서 연결 불가."
     try:
         prompt = (f"당신은 주식 시장의 날카로운 분석가입니다. {stock_name} 종목에 대해 다음 조건으로 보고서를 쓰세요.\n"
-                  f"1. 불필요한 서술이나 인사말은 '절대' 생략하고 즉시 핵심 정보만 전달할 것.\n"
+                  f"1. 불필요한 서술이나 인사말은 생략하고 즉시 핵심 정보만 전달할 것.\n"
                   f"2. '조심해라', '주의해라', '투자 판단은 본인 몫' 같은 사족은 절대로 넣지 말 것.\n"
                   f"3. [차트 흐름], [수급 상태], [핵심 재료] 세 항목으로 아주 짤막하게 요약할 것.\n"
                   f"4. 모든 항목은 불렛포인트를 활용해 한눈에 들어오게 할 것.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "인사말과 경고문구 없이 팩트만 요약하는 전문가 어조를 유지하십시오."},
+            messages=[{"role": "system", "content": "팩트 위주로 요약 보고하는 전문가."},
                       {"role": "user", "content": prompt}],
             temperature=0.2
         )
@@ -152,7 +149,12 @@ if data is not None:
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
     with col_list:
-        st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
+        # 사이드바 날짜 형식 수정
+        d_obj = datetime.strptime(data_date, "%Y%m%d")
+        week_days = ["월", "화", "수", "목", "금", "토", "일"]
+        sidebar_title = f"📂 {d_obj.strftime('%Y-%m-%d')}-{week_days[d_obj.weekday()]}요일 데이터 기준 종목 선정"
+        st.markdown(f'<div class="section-header">{sidebar_title}</div>', unsafe_allow_html=True)
+        
         with st.container(height=800):
             for m_name in ["KOSPI", "KOSDAQ"]:
                 m_df = data[data["시장"] == m_name]
@@ -200,8 +202,8 @@ if data is not None:
             else: st.info("수급 수집 중...")
 
         st.markdown(f"""<div class="report-box"><div class="info-line"><span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; <span class="highlight-mint">거래대금:</span> {stock.get('최근거래일거래대금(억)', 0):,}억</div></div>""", unsafe_allow_html=True)
-        st.markdown('<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률</span><div style="color:#ffffff; font-size:1.1rem; font-weight:600;">데이터 산출 대기 중...</div></div>', unsafe_allow_html=True)
 
+        # 1. 재무 차트 상단 배치
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
@@ -213,6 +215,9 @@ if data is not None:
                 st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 (%)</span></div>', unsafe_allow_html=True)
                 if debt is not None: st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
+
+        # 2. AI 내일 상승 확률 하단 배치
+        st.markdown('<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률</span><div style="color:#ffffff; font-size:1.1rem; font-weight:600;">데이터 산출 대기 중...</div></div>', unsafe_allow_html=True)
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
