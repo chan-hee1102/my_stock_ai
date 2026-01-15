@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 요청: 빨간 박스 여백 제거 및 노란 영역 축소)
+# 2) 디자인 CSS (임찬희님 요청: 제목을 얇은 영역 안으로 삽입)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -47,22 +47,27 @@ st.markdown("""
     .wide-analysis-box {
         background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
         padding: 30px; margin-bottom: 20px; text-align: center;
-        min-height: 250px; display: flex; flex-direction: column; justify-content: center; align-items: center;
+        min-height: 220px; display: flex; flex-direction: column; justify-content: center; align-items: center;
     }
     .analysis-title { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 15px; display: block; }
     .probability-text { color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; }
     
-    /* [긴급수정] 재무제표 카드 영역: 빨간 박스(상단 여백) 제거 및 노란 영역 크기 축소 */
-    .finance-card-compact {
-        background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px;
-        padding: 10px 15px 15px 15px; /* 상단 패딩 최소화 */
-        margin-top: 5px; 
-        min-height: auto !important; /* 최소 높이 해제하여 파란 박스 크기에 맞춤 */
-        display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
+    /* [신규] 재무제표 상단 헤더 바 (검정 얇은 영역) */
+    .finance-header-box {
+        background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+        padding: 8px 15px; margin-bottom: 5px; width: 100%;
+        display: flex; align-items: center;
     }
     .finance-label-compact { 
-        color: #8b949e; font-size: 0.95rem; font-weight: 700; 
-        margin-top: 0px; margin-bottom: 5px; text-align: left;
+        color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0;
+    }
+
+    /* 재무제표 카드 전체 컨테이너 */
+    .finance-card-compact {
+        background-color: transparent; 
+        padding: 0px; margin-top: 5px; 
+        min-height: auto !important;
+        display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
     }
 
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
@@ -87,12 +92,13 @@ client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_AP
 def get_stock_brief(stock_name):
     if not client: return "AI 분석 대기 중..."
     try:
-        prompt = (f"당신은 주식 전문가입니다. {stock_name}의 최근 이슈를 분석하여 '최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 한 문장 답변하세요.")
+        prompt = (f"당신은 주식 전문가입니다. {stock_name}의 최근 이슈를 분석하여 "
+                  f"'최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 한 문장 답변하세요.")
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0.2)
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [수정] 차트 상단 여백(t=0)을 제거하여 타이틀 바로 아래에 밀착
+# 차트 그리기 (상단 마진 0 적용)
 def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
@@ -108,7 +114,7 @@ def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     ))
     fig.update_layout(
         template="plotly_dark", height=220, 
-        margin=dict(l=10, r=10, t=0, b=5), # 상단 여백 제거하여 파란 박스 크기 유지
+        margin=dict(l=10, r=10, t=0, b=5), # 헤더 박스 바로 밑에 붙이기 위해 t=0 유지
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False, tickfont=dict(color="#8b949e")),
         yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False, tickfont=dict(color="#8b949e")),
@@ -139,7 +145,7 @@ if data is not None:
                         if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
                             st.session_state.selected_stock = row.to_dict()
                             st.session_state.messages = []
-                            with st.spinner("AI 분석 엔진 가동 중..."):
+                            with st.spinner("AI 분석 가동 중..."):
                                 st.session_state.current_brief = get_stock_brief(row['종목명'])
                             st.rerun()
 
@@ -148,7 +154,6 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
-        # [A] 주가 캔들 차트
         ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
         try:
             ticker_data = yf.Ticker(ticker_symbol)
@@ -161,7 +166,6 @@ if data is not None:
             debt = (ticker_data.balance_sheet.loc['Total Debt'] / ticker_data.balance_sheet.loc['Stockholders Equity'] * 100).sort_index() if 'Total Debt' in ticker_data.balance_sheet.index else None
         except: income, debt = None, None
 
-        # [B] 테마 분석 박스
         st.markdown(f"""
         <div class="report-box">
             <div class="info-line">
@@ -170,7 +174,7 @@ if data is not None:
                 <span class="highlight-mint">거래대금:</span> {stock.get('거래대금(억)', 0):,}억
             </div>
             <div class="theme-line">
-                <span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.get('current_brief', '분석 로딩 중...')}
+                <span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.get('current_brief', '로딩 중...')}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -184,18 +188,20 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # [D] 재무제표 차트 (상단 여백 제거 및 컨테이너 축소 적용)
+        # [D] 재무제표 차트 (얇은 검정 영역 안으로 제목 삽입)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
-            st.markdown('<div class="finance-label-compact">💰 연간 영업이익 추이</div>', unsafe_allow_html=True)
+            # [수정] 헤더 박스 안에 제목 삽입
+            st.markdown('<div class="finance-header-box"><span class="finance-label-compact">💰 연간 영업이익 추이</span></div>', unsafe_allow_html=True)
             if income is not None: st.plotly_chart(draw_compact_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
             else: st.info("데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
             
         with f_col2:
             st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
-            st.markdown('<div class="finance-label-compact">📉 연간 부채비율 추이</div>', unsafe_allow_html=True)
+            # [수정] 헤더 박스 안에 제목 삽입
+            st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 추이</span></div>', unsafe_allow_html=True)
             if debt is not None: st.plotly_chart(draw_compact_finance_chart(debt.index.strftime('%Y'), debt.values, "%", is_debt=True), use_container_width=True)
             else: st.info("데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
