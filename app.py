@@ -10,12 +10,12 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (재무 차트 상단 밀착 및 3분할 통합 사령부)
+# 2) 디자인 CSS (임찬희님의 요청: 영역 재배치 및 차트 밀착)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
     
-    /* 3분할 카드 디자인: 내부 정렬을 위에서부터 시작하도록 강제 */
+    /* 3분할 카드 디자인: 내부 요소 간격을 좁게 유지 */
     [data-testid="stHorizontalBlock"] > div {
         background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
         display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
@@ -37,37 +37,32 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; }
+    /* 테마 분석 박스 */
+    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
     .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
     .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     
-    /* [찬희님 요청] 빨간 박스 분석 영역 스타일 */
-    .analysis-placeholder {
-        background-color: #161b22; border: 1px dashed #30363d; border-radius: 10px;
-        padding: 15px; margin-bottom: 10px; min-height: 100px;
-        display: flex; flex-direction: column; justify-content: center; align-items: center;
-        text-align: center; width: 100%;
+    /* [찬희님 요청] 테마와 재무제표 사이의 '통합 분석 영역' */
+    .wide-analysis-box {
+        background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
+        padding: 20px; margin-bottom: 20px; text-align: center;
     }
-    .analysis-text { color: #8b949e; font-size: 0.85rem; font-weight: 600; }
-    .probability-badge {
-        background-color: rgba(0, 229, 255, 0.1); color: #00e5ff;
-        padding: 4px 12px; border-radius: 15px; font-weight: 800; margin-top: 8px; font-size: 0.9rem;
-    }
+    .analysis-title { color: #00e5ff; font-size: 1.1rem; font-weight: 800; margin-bottom: 10px; display: block; }
+    .probability-text { color: #ffffff; font-size: 1rem; font-weight: 600; }
     
-    /* 재무 카드: 상단 여백을 없애고 세로 공간 확보 */
-    .finance-card-fixed {
+    /* 재무제표 카드 영역 */
+    .finance-card-compact {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px;
-        padding: 15px 15px 0px 15px; margin-top: 10px; min-height: 480px;
-        display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
+        padding: 15px; margin-top: 5px; min-height: 320px;
     }
-    .finance-label-fixed { color: #00e5ff; font-size: 1.1rem; font-weight: 800; margin-bottom: 10px; }
+    .finance-label-compact { color: #8b949e; font-size: 0.95rem; font-weight: 700; margin-bottom: 0px; }
 
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 및 AI 로직
+# 3) 데이터 로드 및 AI 엔진
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -85,29 +80,27 @@ client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_AP
 def get_stock_brief(stock_name):
     if not client: return "AI 분석 대기 중..."
     try:
-        prompt = (f"당신은 주식 전략가입니다. {stock_name}의 최근 이슈를 분석하여 "
-                  f"'최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 한 문장 답변하세요.")
+        prompt = (f"당신은 주식 전문가입니다. {stock_name}의 최근 이슈를 분석하여 '최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 한 문장 답변하세요.")
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0.2)
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# [핵심 수정] 상단 여백(t=0)을 극단적으로 줄인 Plotly 함수
-def draw_pro_finance_chart(dates, values, unit, is_debt=False):
+# [완결 수정] 여백 0(t=0) 적용하여 제목 바로 아래에 붙이는 차트 함수
+def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1)
-    
     line_color = "#00e5ff" if (not is_debt and display_values[-1] > 0) or (is_debt and display_values[-1] < display_values[0]) else "#ff3366"
     
     fig.add_trace(go.Scatter(
         x=dates, y=display_values, mode='lines+markers+text',
         text=[f"{v:,.0f}{unit}" for v in display_values],
         textposition="top center", textfont=dict(color="white", size=10),
-        line=dict(color=line_color, width=4), marker=dict(size=10, color=line_color)
+        line=dict(color=line_color, width=3), marker=dict(size=8, color=line_color)
     ))
     fig.update_layout(
-        template="plotly_dark", height=280, 
-        margin=dict(l=10, r=10, t=0, b=10), # [수정] 상단 여백을 0으로 만들어 분석 박스 바로 밑에 붙임
+        template="plotly_dark", height=220, 
+        margin=dict(l=10, r=10, t=0, b=10), # [핵심] 상단 여백 0으로 완전 제거
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False, tickfont=dict(color="#8b949e")),
         yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False, tickfont=dict(color="#8b949e")),
@@ -115,7 +108,7 @@ def draw_pro_finance_chart(dates, values, unit, is_debt=False):
     )
     return fig
 
-# 4) 메인 앱 레이아웃 (3분할 사령부 고정)
+# 4) 세션 관리 및 메인 레이아웃 (3분할 사령부)
 if data is not None:
     if "messages" not in st.session_state: st.session_state.messages = []
     if "selected_stock" not in st.session_state:
@@ -138,16 +131,16 @@ if data is not None:
                         if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
                             st.session_state.selected_stock = row.to_dict()
                             st.session_state.messages = []
-                            with st.spinner("데이터 분석 중..."):
+                            with st.spinner("AI 분석 엔진 가동 중..."):
                                 st.session_state.current_brief = get_stock_brief(row['종목명'])
                             st.rerun()
 
-    # [2] 가운데 분석실
+    # [2] 가운데 분석실 (레이아웃 순서 전면 개편)
     with col_main:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
-        # 캔들 차트 (배경색 다크 테마 고정)
+        # [A] 주가 캔들 차트 (상단)
         ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
         try:
             ticker_data = yf.Ticker(ticker_symbol)
@@ -160,7 +153,7 @@ if data is not None:
             debt = (ticker_data.balance_sheet.loc['Total Debt'] / ticker_data.balance_sheet.loc['Stockholders Equity'] * 100).sort_index() if 'Total Debt' in ticker_data.balance_sheet.index else None
         except: income, debt = None, None
 
-        # 테마 브리핑 박스
+        # [B] 테마 분석 박스
         st.markdown(f"""
         <div class="report-box">
             <div class="info-line">
@@ -169,34 +162,32 @@ if data is not None:
                 <span class="highlight-mint">거래대금:</span> {stock.get('거래대금(억)', 0):,}억
             </div>
             <div class="theme-line">
-                <span class="highlight-mint">🤖 AI 비서 테마 브리핑:</span> {st.session_state.get('current_brief', '분석 중...')}
+                <span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.get('current_brief', '분석 로딩 중...')}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # [완결 수정] 분석 박스 영역 추가 및 차트 밀착 배치
+        # [C] 찬희님 요청: 테마 분석과 재무제표 사이의 '통합 분석 영역'
+        st.markdown(f"""
+        <div class="wide-analysis-box">
+            <span class="analysis-title">🎯 AI 내일 상승 확률 및 분석 리포트</span>
+            <div class="probability-text">익일 상승 확률 분석 대기 중... (차트 패턴 및 수급 분석 포함)</div>
+            <div style="background-color: rgba(0, 229, 255, 0.1); color: #00e5ff; padding: 5px 15px; border-radius: 20px; display: inline-block; margin-top: 10px; font-weight: 800;">데이터 산출 중</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # [D] 재무제표 차트 (하단으로 배치하여 여백 문제 해결)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
-            st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">💰 연간 영업이익 추이</div>', unsafe_allow_html=True)
-            # 찬희님이 요청한 빨간 박스 분석 영역
-            st.markdown(f"""
-            <div class="analysis-placeholder">
-                <span class="analysis-text">📈 {stock['종목명']} 전략 시뮬레이션</span>
-                <div class="probability-badge">익일 상승 확률 분석 대기 중</div>
-            </div>
-            """, unsafe_allow_html=True)
-            if income is not None: st.plotly_chart(draw_pro_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
+            st.markdown('<div class="finance-card-compact"><div class="finance-label-compact">💰 연간 영업이익 추이</div>', unsafe_allow_html=True)
+            if income is not None: st.plotly_chart(draw_compact_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
+            else: st.info("데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
             
         with f_col2:
-            st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">📉 연간 부채비율 추이</div>', unsafe_allow_html=True)
-            st.markdown(f"""
-            <div class="analysis-placeholder">
-                <span class="analysis-text">🔍 재무 건전성 AI 정밀 진단</span>
-                <div class="probability-badge">재무 데이터 분석 완료</div>
-            </div>
-            """, unsafe_allow_html=True)
-            if debt is not None: st.plotly_chart(draw_pro_finance_chart(debt.index.strftime('%Y'), debt.values, "%", is_debt=True), use_container_width=True)
+            st.markdown('<div class="finance-card-compact"><div class="finance-label-compact">📉 연간 부채비율 추이</div>', unsafe_allow_html=True)
+            if debt is not None: st.plotly_chart(draw_compact_finance_chart(debt.index.strftime('%Y'), debt.values, "%", is_debt=True), use_container_width=True)
+            else: st.info("데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
 
     # [3] 오른쪽 AI 비서
@@ -207,7 +198,7 @@ if data is not None:
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]): st.markdown(f"<div style='font-size:1.1rem; color:white;'>{m['content']}</div>", unsafe_allow_html=True)
         
-        if prompt := st.chat_input("AI 비서에게 구체적인 전략을 질문하세요."):
+        if prompt := st.chat_input("분석 리포트에 대해 궁금한 점을 물어보세요."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
                 with st.chat_message("user"): st.write(prompt)
