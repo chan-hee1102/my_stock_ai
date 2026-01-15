@@ -9,7 +9,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS
+# 2) 디자인 CSS (블랙 & 민트 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -52,12 +52,10 @@ def load_data():
 
 data, data_date = load_data()
 
-# 세션 상태 초기화
 if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
 
-# Gemini 클라이언트 (404 방지를 위한 모델 고정)
 def get_client():
     key = st.secrets.get("GEMINI_API_KEY")
     if not key: return None
@@ -83,15 +81,15 @@ if data is not None:
 
     with col_chat:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트 (Pro)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트</div>', unsafe_allow_html=True)
         
         chat_container = st.container(height=700)
         with chat_container:
             st.markdown(f"""
             <div class="report-box"><div class="report-text">
                 <span class="highlight-mint">● 분석 대상:</span> {stock["종목명"]}<br>
-                <span class="highlight-mint">● 시스템:</span> Gemini 1.5 Pro (Enterprise Grade)<br>
-                <span class="highlight-mint">● 모드:</span> 실시간 구글 검색 및 Deep-Reasoning 적용 중
+                <span class="highlight-mint">● 엔진:</span> Gemini 2.0 Flash (최신 고성능)<br>
+                <span class="highlight-mint">● 기능:</span> 실시간 구글 검색 및 심층 추론 리포트 작성
             </div></div>
             """, unsafe_allow_html=True)
 
@@ -99,52 +97,51 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # --- AI 채팅 로직 (404 에러 원천 차단 모델명 적용) ---
-        if prompt := st.chat_input(f"{stock['종목명']}의 향후 전망을 물어보세요!"):
+        if prompt := st.chat_input(f"{stock['종목명']}에 대해 궁금한 점을 물어보세요!"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                with st.status("AI 커맨더가 분석 중...", expanded=True) as status:
+                with st.status("AI 커맨더가 분석 중입니다...", expanded=True) as status:
                     try:
-                        st.write("🔍 구글 실시간 데이터 크롤링 중...")
+                        st.write("🔍 실시간 데이터 검색 및 분석 중...")
                         history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
                         
+                        # 지침 강화
                         instruction = (
-                            f"당신은 {stock['종목명']} 주식 분석 전문가입니다. 현재 날짜 {datetime.now().strftime('%Y-%m-%d')} 기준의 최신 정보를 제공하세요.\n"
-                            f"반드시 '구글 검색' 도구를 사용하여 최신 뉴스 및 주가 수치를 확인하고 답변하세요.\n"
-                            f"분석은 객관적이어야 하며, 텍스트와 표를 적절히 섞어서 가독성 좋게 답변하세요.\n\n"
-                            f"이전 대화:\n{history_context}"
+                            f"당신은 주식 분석 전문가입니다. 종목명: {stock['종목명']}\n"
+                            f"지침: 구글 검색을 통해 최신 정보를 확인하고, 구체적인 수치와 함께 투자 전략을 제안하세요.\n"
+                            f"답변은 반드시 한국어로 작성하며 가독성 좋게 출력하세요."
                         )
                         
-                        google_search_tool = types.Tool(google_search=types.GoogleSearch())
-
-                        st.write("🧠 Pro 엔진 분석 보고서 작성 중...")
-                        
-                        # [핵심] 404 에러 방지를 위해 모델명을 가장 표준적인 이름으로 고정
+                        # 모델명을 gemini-2.0-flash로 변경 (가장 안정적)
                         response = client.models.generate_content(
-                            model="gemini-1.5-pro", 
-                            contents=f"{instruction}\n\n질문: {prompt}",
-                            config=types.GenerateContentConfig(tools=[google_search_tool])
+                            model="gemini-2.0-flash", 
+                            contents=f"{instruction}\n\n사용자 질문: {prompt}",
+                            config=types.GenerateContentConfig(
+                                tools=[types.Tool(google_search=types.GoogleSearch())]
+                            )
                         )
                         
+                        # 응답 추출 로직 강화
                         response_text = ""
-                        if response.candidates:
-                            for part in response.candidates[0].content.parts:
-                                if part.text:
-                                    response_text += part.text
-                        
-                        if not response_text:
-                            response_text = "⚠️ 현재 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요."
+                        try:
+                            if response.text:
+                                response_text = response.text
+                            else:
+                                for part in response.candidates[0].content.parts:
+                                    if part.text: response_text += part.text
+                        except:
+                            response_text = "⚠️ 검색 결과를 정리하는 중 오류가 발생했습니다. 다시 질문해 주시겠습니까?"
 
-                        status.update(label="✅ 분석 완료", state="complete", expanded=False)
+                        status.update(label="✅ 분석 완료!", state="complete", expanded=False)
                         with st.chat_message("assistant"):
                             st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{response_text}</div>", unsafe_allow_html=True)
                         st.session_state.messages.append({"role": "assistant", "content": response_text})
                     
                     except Exception as e:
                         status.update(label="❌ 오류 발생", state="error", expanded=True)
-                        st.error(f"오류 내용: {str(e)}")
+                        st.error(f"상세 오류: {str(e)}")
             
             st.rerun()
