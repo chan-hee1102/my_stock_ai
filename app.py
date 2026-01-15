@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 요청: 제목을 얇은 영역 안으로 삽입)
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 + 헤더 박스 최적화)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -52,7 +52,7 @@ st.markdown("""
     .analysis-title { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 15px; display: block; }
     .probability-text { color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; }
     
-    /* [신규] 재무제표 상단 헤더 바 (검정 얇은 영역) */
+    /* 재무제표 상단 헤더 바 (검정 얇은 영역) */
     .finance-header-box {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px;
         padding: 8px 15px; margin-bottom: 5px; width: 100%;
@@ -62,7 +62,7 @@ st.markdown("""
         color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0;
     }
 
-    /* 재무제표 카드 전체 컨테이너 */
+    /* 재무제표 컨테이너 */
     .finance-card-compact {
         background-color: transparent; 
         padding: 0px; margin-top: 5px; 
@@ -89,16 +89,26 @@ def load_data():
 data, data_date = load_data()
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
 
+# [로직 수정] AI 테마 분석: 한국어 강제 지침 추가
 def get_stock_brief(stock_name):
     if not client: return "AI 분석 대기 중..."
     try:
+        # 시스템 메시지에 언어 제약 조건 강화
         prompt = (f"당신은 주식 전문가입니다. {stock_name}의 최근 이슈를 분석하여 "
-                  f"'최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 한 문장 답변하세요.")
-        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0.2)
+                  f"'최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 답변하세요. "
+                  f"반드시 모든 문장은 한국어로만 작성하세요.")
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile", 
+            messages=[
+                {"role": "system", "content": "모든 답변은 반드시 한국어로만 작성하세요. 일본어나 다른 외국어는 절대 사용하지 마세요."},
+                {"role": "user", "content": prompt}
+            ], 
+            temperature=0.2
+        )
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
 
-# 차트 그리기 (상단 마진 0 적용)
+# 차트 그리기
 def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
@@ -114,10 +124,9 @@ def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     ))
     fig.update_layout(
         template="plotly_dark", height=220, 
-        margin=dict(l=10, r=10, t=0, b=5), # 헤더 박스 바로 밑에 붙이기 위해 t=0 유지
+        margin=dict(l=10, r=10, t=0, b=5), # 헤더 박스 밀착
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, tickfont=dict(color="#8b949e")),
-        yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False, tickfont=dict(color="#8b949e")),
+        xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False),
         showlegend=False
     )
     return fig
@@ -145,7 +154,7 @@ if data is not None:
                         if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
                             st.session_state.selected_stock = row.to_dict()
                             st.session_state.messages = []
-                            with st.spinner("AI 분석 가동 중..."):
+                            with st.spinner("AI 분석 엔진 가동 중..."):
                                 st.session_state.current_brief = get_stock_brief(row['종목명'])
                             st.rerun()
 
@@ -188,11 +197,10 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # [D] 재무제표 차트 (얇은 검정 영역 안으로 제목 삽입)
+        # [D] 재무제표 차트 (헤더 박스 적용)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
-            # [수정] 헤더 박스 안에 제목 삽입
             st.markdown('<div class="finance-header-box"><span class="finance-label-compact">💰 연간 영업이익 추이</span></div>', unsafe_allow_html=True)
             if income is not None: st.plotly_chart(draw_compact_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
             else: st.info("데이터 없음")
@@ -200,7 +208,6 @@ if data is not None:
             
         with f_col2:
             st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
-            # [수정] 헤더 박스 안에 제목 삽입
             st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 추이</span></div>', unsafe_allow_html=True)
             if debt is not None: st.plotly_chart(draw_compact_finance_chart(debt.index.strftime('%Y'), debt.values, "%", is_debt=True), use_container_width=True)
             else: st.info("데이터 없음")
@@ -219,7 +226,12 @@ if data is not None:
             with chat_container:
                 with st.chat_message("user"): st.write(prompt)
             if client:
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": f"당신은 {stock['종목명']} 전문 AI 비서입니다."}] + st.session_state.messages[-5:])
+                # [로직 수정] AI 비서에게도 강력한 한국어 답변 지침 부여
+                history = [
+                    {"role": "system", "content": f"당신은 {stock['종목명']} 전문 AI 비서입니다. 반드시 모든 답변은 한국어로만 작성하세요. 다른 외국어는 절대 사용하지 마세요."}
+                ]
+                for m in st.session_state.messages[-5:]: history.append(m)
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history)
                 ans = res.choices[0].message.content
                 st.session_state.messages.append({"role": "assistant", "content": ans})
             st.rerun()
