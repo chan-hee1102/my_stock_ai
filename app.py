@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (버그 수정 및 가독성 극대화)
+# 2) 디자인 CSS (3분할 최적화 및 재무 차트 버그 수정)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -21,57 +21,39 @@ st.markdown("""
     }
     
     .section-header { 
-        color: #00e5ff !important; font-size: 1.4rem !important; font-weight: 800; 
+        color: #00e5ff !important; font-size: 1.3rem !important; font-weight: 800; 
         margin-bottom: 20px; border-left: 6px solid #00e5ff; padding-left: 15px; 
     }
     
     .market-header {
-        background-color: #0d1117; color: #8b949e; font-size: 0.85rem; font-weight: 800;
+        background-color: #0d1117; color: #8b949e; font-size: 0.8rem; font-weight: 800;
         text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #30363d;
     }
     
-    /* 리스트 버튼 스타일 */
     .stButton > button {
         width: 100% !important; background-color: transparent !important; color: #ffffff !important;
-        border: none !important; font-size: 0.95rem !important; text-align: left !important; padding: 5px 0px !important;
+        border: none !important; font-size: 0.9rem !important; text-align: left !important; padding: 4px 0px !important;
     }
-    .stButton > button:hover { color: #00e5ff !important; transform: translateX(4px); transition: 0.2s; }
+    .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-top: 15px; }
-    .info-line { color: #ffffff !important; font-size: 1.1rem; font-weight: 700; }
-    .theme-line { color: #ffffff !important; font-size: 1.1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
+    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; }
+    .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
+    .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     
-    /* [수정] 재무 카드 위치 고정 */
-    .finance-card-pro {
-        background-color: #0d1117; border: 1px solid #30363d; border-radius: 15px;
-        padding: 20px; margin-bottom: 20px; min-height: 380px;
+    /* [수정] 재무 카드 영역 고정 및 튐 방지 */
+    .finance-card-fixed {
+        background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px;
+        padding: 15px; margin-top: 10px; height: 320px; overflow: hidden;
     }
-    .finance-label-pro { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 5px; }
+    .finance-label-fixed { color: #00e5ff; font-size: 1.1rem; font-weight: 800; margin-bottom: 0px; }
 
-    /* [핵심] 플로팅 버튼 위치 강제 고정 (화면 어디서든 보임) */
-    div.stButton > button[key="fab_toggle"] {
-        position: fixed !important;
-        bottom: 40px !important;
-        right: 40px !important;
-        width: 70px !important;
-        height: 70px !important;
-        border-radius: 50% !important;
-        background-color: #00e5ff !important;
-        color: #000000 !important;
-        font-size: 2rem !important;
-        font-weight: bold !important;
-        z-index: 999999 !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        box-shadow: 0 0 25px rgba(0, 229, 255, 0.6) !important;
-        border: none !important;
-    }
+    /* 채팅창 스타일 */
+    div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 로직
+# 3) 데이터 및 AI 로직
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -85,7 +67,6 @@ def load_data():
 
 data, data_date = load_data()
 
-# AI 분석 함수
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
 def get_stock_brief(stock_name):
     if not client: return "AI 연결 실패"
@@ -96,24 +77,24 @@ def get_stock_brief(stock_name):
             temperature=0.3
         )
         return res.choices[0].message.content
-    except: return "분석 지연 중"
+    except: return "분석 중..."
 
-# 재무 차트 함수 (여백 버그 수정)
 def draw_pro_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
-    fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1.5)
+    # 0 기준선
+    fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1)
     
     line_color = "#00e5ff" if (not is_debt and display_values[-1] > 0) or (is_debt and display_values[-1] < display_values[0]) else "#ff3366"
     
     fig.add_trace(go.Scatter(
         x=dates, y=display_values, mode='lines+markers+text',
         text=[f"{v:,.0f}{unit}" for v in display_values],
-        textposition="top center", textfont=dict(color="white", size=12),
-        line=dict(color=line_color, width=4), marker=dict(size=10, color=line_color)
+        textposition="top center", textfont=dict(color="white", size=10),
+        line=dict(color=line_color, width=3), marker=dict(size=8, color=line_color)
     ))
     fig.update_layout(
-        template="plotly_dark", height=300, margin=dict(l=10, r=10, t=10, b=10), # 상단 마진 축소
+        template="plotly_dark", height=240, margin=dict(l=5, r=5, t=5, b=5), # 여백 최소화
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False)
     )
@@ -121,26 +102,15 @@ def draw_pro_finance_chart(dates, values, unit, is_debt=False):
 
 # 세션 관리
 if "messages" not in st.session_state: st.session_state.messages = []
-if "chat_active" not in st.session_state: st.session_state.chat_active = False
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
     st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
 
-# 4) 메인 레이아웃
+# 4) 메인 레이아웃 (3분할: 2 - 5 - 3)
 if data is not None:
-    # 플로팅 버튼 (강제 고정)
-    if st.button("💬", key="fab_toggle"):
-        st.session_state.chat_active = not st.session_state.chat_active
-        st.rerun()
+    col_list, col_main, col_chat = st.columns([2, 5, 3])
 
-    # 채팅창 상태에 따른 화면 구성
-    if st.session_state.chat_active:
-        col_list, col_main, col_chat = st.columns([2, 4.8, 3.2])
-    else:
-        col_list, col_main = st.columns([2.5, 7.5])
-        col_chat = None
-
-    # 왼쪽 종목 리스트 (기존 유지)
+    # [1] 왼쪽 종목 리스트
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=850):
@@ -157,10 +127,10 @@ if data is not None:
                             with st.spinner("분석 중..."): st.session_state.current_brief = get_stock_brief(row['종목명'])
                             st.rerun()
 
-    # 가운데 메인 분석 보드
+    # [2] 가운데 메인 분석 보드
     with col_main:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">📉 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
         
         ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
         try:
@@ -169,7 +139,7 @@ if data is not None:
             fig = go.Figure(data=[go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'],
                                                  low=chart_df['Low'], close=chart_df['Close'],
                                                  increasing_line_color='#00e5ff', decreasing_line_color='#ff3366')])
-            fig.update_layout(template="plotly_dark", height=380, margin=dict(l=10, r=10, t=10, b=10),
+            fig.update_layout(template="plotly_dark", height=350, margin=dict(l=10, r=10, t=10, b=10),
                               paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
             
@@ -191,36 +161,35 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # 재무 카드 (위치 수정 완료)
+        # 재무 카드 (높이 및 여백 수정)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
-            st.markdown('<div class="finance-card-pro"><div class="finance-label-pro">💰 영업이익 (Earnings)</div>', unsafe_allow_html=True)
+            st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">💰 영업이익 (Earnings)</div>', unsafe_allow_html=True)
             if income is not None: st.plotly_chart(draw_pro_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
-            else: st.info("재무 데이터 누락")
+            else: st.info("데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
         with f_col2:
-            st.markdown('<div class="finance-card-pro"><div class="finance-label-pro">📉 부채비율 (Debt Ratio)</div>', unsafe_allow_html=True)
+            st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">📉 부채비율 (Debt Ratio)</div>', unsafe_allow_html=True)
             if debt_ratio is not None: st.plotly_chart(draw_pro_finance_chart(debt_ratio.index.strftime('%Y'), debt_ratio.values, "%", is_debt=True), use_container_width=True)
-            else: st.info("재무 데이터 누락")
+            else: st.info("데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # 오른쪽 채팅 섹션
-    if col_chat:
-        with col_chat:
-            st.markdown(f'<div class="section-header">🤖 전략 분석관</div>', unsafe_allow_html=True)
-            chat_container = st.container(height=720)
+    # [3] 오른쪽 AI 비서
+    with col_chat:
+        st.markdown(f'<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
+        chat_container = st.container(height=720)
+        with chat_container:
+            for m in st.session_state.messages:
+                with st.chat_message(m["role"]): st.markdown(f"<div style='font-size:1rem; color:white;'>{m['content']}</div>", unsafe_allow_html=True)
+        
+        if prompt := st.chat_input("AI 비서에게 질문하세요."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
-                for m in st.session_state.messages:
-                    with st.chat_message(m["role"]): st.markdown(f"<div style='font-size:1.1rem; color:white;'>{m['content']}</div>", unsafe_allow_html=True)
-            
-            if prompt := st.chat_input("AI에게 종목의 정밀 분석을 요청하세요."):
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                with chat_container:
-                    with st.chat_message("user"): st.write(prompt)
-                if client:
-                    history = [{"role": "system", "content": f"당신은 {stock['종목명']}의 모든 데이터를 분석하는 AI 전략관입니다."}]
-                    for m in st.session_state.messages[-5:]: history.append(m)
-                    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history)
-                    ans = res.choices[0].message.content
-                    st.session_state.messages.append({"role": "assistant", "content": ans})
-                st.rerun()
+                with st.chat_message("user"): st.write(prompt)
+            if client:
+                history = [{"role": "system", "content": f"당신은 {stock['종목명']} 전문 AI 비서입니다."}]
+                for m in st.session_state.messages[-5:]: history.append(m)
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history)
+                ans = res.choices[0].message.content
+                st.session_state.messages.append({"role": "assistant", "content": ans})
+            st.rerun()
