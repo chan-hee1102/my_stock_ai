@@ -2,8 +2,10 @@
 import streamlit as st
 import pandas as pd
 import os
+import yfinance as yf
+import plotly.graph_objects as go
 from groq import Groq
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
@@ -30,11 +32,9 @@ st.markdown("""
         text-align: left !important; padding: 5px 0px !important; transition: 0.2s;
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(4px); }
-    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
-    .report-text { color: #e0e6ed !important; font-size: 1.15rem !important; line-height: 1.8; }
+    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 15px !important; padding: 10px !important; }
-    div[data-testid="stChatInput"] textarea { color: #000000 !important; font-size: 1.15rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -45,19 +45,10 @@ def load_data():
     files = [f for f in os.listdir(out_dir) if f.startswith("final_result_") and f.endswith(".csv")]
     if not files: return None, None
     latest_file = sorted(files)[-1]
-    
-    try:
-        raw_date = latest_file.split('_')[-1].replace('.csv', '')
-        date_str = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
-    except:
-        date_str = datetime.now().strftime('%Y-%m-%d')
-        
     df = pd.read_csv(os.path.join(out_dir, latest_file))
-    if "시장" in df.columns:
-        df["시장"] = df["시장"].astype(str).str.strip().str.upper()
-    if "종목코드" in df.columns: 
-        df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
-    return df, date_str
+    if "시장" in df.columns: df["시장"] = df["시장"].astype(str).str.strip().str.upper()
+    if "종목코드" in df.columns: df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+    return df, latest_file.split('_')[-1].replace('.csv', '')
 
 data, data_date = load_data()
 
@@ -72,84 +63,84 @@ def get_groq_client():
 
 client = get_groq_client()
 
-# 4) 메인 레이아웃 구성
+# 4) 메인 레이아웃 (2.5:7.5 비율 유지)
 if data is not None:
-    # 시장별 데이터 필터링
     df_kospi = data[data["시장"] == "KOSPI"].copy()
     df_kosdaq = data[data["시장"] == "KOSDAQ"].copy()
 
-    # 핵심 변경 포인트: 사이드바 영역을 2.5로 축소
     col_list, col_chat = st.columns([2.5, 7.5])
 
-    # 왼쪽 종목 리스트 섹션
+    # 왼쪽 종목 리스트
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=800):
             m_col1, m_col2 = st.columns(2)
-            
             with m_col1:
                 st.markdown('<div class="market-header">KOSPI</div>', unsafe_allow_html=True)
                 for i, row in df_kospi.iterrows():
-                    is_selected = st.session_state.selected_stock['종목명'] == row['종목명']
-                    label = f"● {row['종목명']}" if is_selected else f"  {row['종목명']}"
-                    if st.button(label, key=f"kpi_{i}"):
+                    label = f"● {row['종목명']}" if st.session_state.selected_stock['종목명'] == row['종목명'] else f"  {row['종목명']}"
+                    if st.button(label, key=f"k_{i}"):
                         st.session_state.selected_stock = row.to_dict()
                         st.session_state.messages = []
                         st.rerun()
-            
             with m_col2:
                 st.markdown('<div class="market-header">KOSDAQ</div>', unsafe_allow_html=True)
                 for i, row in df_kosdaq.iterrows():
-                    is_selected = st.session_state.selected_stock['종목명'] == row['종목명']
-                    label = f"● {row['종목명']}" if is_selected else f"  {row['종목명']}"
-                    if st.button(label, key=f"kdq_{i}"):
+                    label = f"● {row['종목명']}" if st.session_state.selected_stock['종목명'] == row['종목명'] else f"  {row['종목명']}"
+                    if st.button(label, key=f"q_{i}"):
                         st.session_state.selected_stock = row.to_dict()
                         st.session_state.messages = []
                         st.rerun()
 
-    # 오른쪽 채팅 섹션
+    # 오른쪽 채팅 및 차트 영역
     with col_chat:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} AI 정밀 리포트</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">💬 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
         
+        # --- [신규 기능] 인터랙티브 캔들스틱 차트 ---
+        with st.container():
+            ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
+            chart_df = yf.download(ticker, start=(datetime.now() - timedelta(days=90)), end=datetime.now())
+            
+            if not chart_df.empty:
+                fig = go.Figure(data=[go.Candlestick(
+                    x=chart_df.index,
+                    open=chart_df['Open'], high=chart_df['High'],
+                    low=chart_df['Low'], close=chart_df['Close'],
+                    increasing_line_color='#00e5ff', decreasing_line_color='#ff3366'
+                )])
+                fig.update_layout(
+                    template="plotly_dark", height=350, margin=dict(l=10, r=10, t=10, b=10),
+                    paper_bgcolor="#1c2128", plot_bgcolor="#1c2128",
+                    xaxis_rangeslider_visible=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
         st.markdown(f"""
-        <div class="report-box"><div class="report-text">
-            <span class="highlight-mint">● 분석 대상:</span> {stock["종목명"]} ({stock.get('종목코드', '000000')})<br>
-            <span class="highlight-mint">● AI 엔진:</span> Llama-3.3-70B (Versatile Mode)<br>
-            <span class="highlight-mint">● 시장구분:</span> {stock.get('시장', 'N/A')}
-        </div></div>
+        <div class="report-box">
+            <span class="highlight-mint">분석 대상:</span> {stock["종목명"]} ({stock['종목코드']}) | 
+            <span class="highlight-mint">현재가:</span> {stock.get('현재가', 0):,}원 |
+            <span class="highlight-mint">엔진:</span> Llama-3.3-70B
+        </div>
         """, unsafe_allow_html=True)
 
-        chat_container = st.container(height=650)
+        chat_container = st.container(height=450)
         with chat_container:
             for m in st.session_state.messages:
-                with st.chat_message(m["role"]):
-                    st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
+                with st.chat_message(m["role"]): st.write(m["content"])
 
-        if prompt := st.chat_input(f"{stock['종목명']}의 전망을 물어보세요!"):
+        if prompt := st.chat_input("이 종목의 차트 흐름과 비교해서 전망을 물어보세요."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
-                with st.chat_message("user"):
-                    st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
+                with st.chat_message("user"): st.write(prompt)
             
             if client:
-                with st.status("분석 중...", expanded=True) as status:
-                    try:
-                        history = [{"role": "system", "content": f"당신은 {stock['종목명']} 전문 주식 분석가입니다. 한국어로 답변하세요. 일본어 금지."}]
-                        for m in st.session_state.messages[-10:]:
-                            history.append({"role": m["role"], "content": m["content"]})
-                        
-                        completion = client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=history,
-                            temperature=0.7, 
-                        )
-                        ans = completion.choices[0].message.content
-                        status.update(label="✅ 완료", state="complete", expanded=False)
-                        with chat_container:
-                            with st.chat_message("assistant"):
-                                st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{ans}</div>", unsafe_allow_html=True)
-                        st.session_state.messages.append({"role": "assistant", "content": ans})
-                    except Exception as e:
-                        st.error(f"오류: {str(e)}")
+                with st.status("AI 분석 중...", expanded=False):
+                    history = [{"role": "system", "content": f"당신은 {stock['종목명']} 전문 분석가입니다. 상단에 실제 캔들 차트가 표시되고 있으므로 텍스트로 차트를 그리지 마세요. 한국어로 답변하세요."}]
+                    for m in st.session_state.messages[-5:]: history.append(m)
+                    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history)
+                    ans = res.choices[0].message.content
+                    with chat_container:
+                        with st.chat_message("assistant"): st.write(ans)
+                    st.session_state.messages.append({"role": "assistant", "content": ans})
             st.rerun()
