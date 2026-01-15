@@ -1,6 +1,4 @@
-# Git이 무시해야 할 파일들
 .streamlit/secrets.toml
 venv/
 __pycache__/
 .env
-*.pyc
