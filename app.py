@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (3분할 최적화 및 재무 차트 버그 수정)
+# 2) 디자인 CSS (재무 차트 수직 정렬 및 3분할 최적화)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -41,19 +41,18 @@ st.markdown("""
     .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     
-    /* [수정] 재무 카드 영역 고정 및 튐 방지 */
+    /* [수정] 재무 카드 영역: 높이를 고정하고 내부 여백을 줄여서 차트가 위로 붙게 함 */
     .finance-card-fixed {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px;
-        padding: 15px; margin-top: 10px; height: 320px; overflow: hidden;
+        padding: 15px 15px 5px 15px; margin-top: 10px; height: 340px;
     }
     .finance-label-fixed { color: #00e5ff; font-size: 1.1rem; font-weight: 800; margin-bottom: 0px; }
 
-    /* 채팅창 스타일 */
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 및 AI 로직
+# 3) 데이터 로드 로직
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -67,6 +66,7 @@ def load_data():
 
 data, data_date = load_data()
 
+# AI 분석 엔진
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
 def get_stock_brief(stock_name):
     if not client: return "AI 연결 실패"
@@ -79,6 +79,7 @@ def get_stock_brief(stock_name):
         return res.choices[0].message.content
     except: return "분석 중..."
 
+# [수정] 재무 차트 그리기 (상단 여백 제거)
 def draw_pro_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
@@ -90,23 +91,25 @@ def draw_pro_finance_chart(dates, values, unit, is_debt=False):
     fig.add_trace(go.Scatter(
         x=dates, y=display_values, mode='lines+markers+text',
         text=[f"{v:,.0f}{unit}" for v in display_values],
-        textposition="top center", textfont=dict(color="white", size=10),
-        line=dict(color=line_color, width=3), marker=dict(size=8, color=line_color)
+        textposition="top center", textfont=dict(color="white", size=11),
+        line=dict(color=line_color, width=3.5), marker=dict(size=9, color=line_color)
     ))
     fig.update_layout(
-        template="plotly_dark", height=240, margin=dict(l=5, r=5, t=5, b=5), # 여백 최소화
+        template="plotly_dark", height=280, 
+        margin=dict(l=10, r=10, t=10, b=10), # [핵심 수정] 상단 마진을 10으로 축소하여 위로 붙임
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False)
+        xaxis=dict(showgrid=False, tickfont=dict(color="#8b949e")),
+        yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False, tickfont=dict(color="#8b949e"))
     )
     return fig
 
-# 세션 관리
+# 세션 상태 관리
 if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
     st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
 
-# 4) 메인 레이아웃 (3분할: 2 - 5 - 3)
+# 4) 3분할 레이아웃 실행 (2 : 5 : 3)
 if data is not None:
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
@@ -130,7 +133,7 @@ if data is not None:
     # [2] 가운데 메인 분석 보드
     with col_main:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">📉 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
         
         ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
         try:
@@ -143,6 +146,7 @@ if data is not None:
                               paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
             
+            # 재무 데이터 연동
             income = ticker_data.financials.loc['Operating Income'].sort_index() if 'Operating Income' in ticker_data.financials.index else None
             debt_ratio = (ticker_data.balance_sheet.loc['Total Debt'] / ticker_data.balance_sheet.loc['Stockholders Equity'] * 100).sort_index() if 'Total Debt' in ticker_data.balance_sheet.index else None
         except: income, debt_ratio = None, None
@@ -161,17 +165,17 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # 재무 카드 (높이 및 여백 수정)
+        # 재무 카드 (수직 정렬 문제 해결)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">💰 영업이익 (Earnings)</div>', unsafe_allow_html=True)
             if income is not None: st.plotly_chart(draw_pro_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
-            else: st.info("데이터 없음")
+            else: st.info("재무 데이터 누락")
             st.markdown('</div>', unsafe_allow_html=True)
         with f_col2:
             st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">📉 부채비율 (Debt Ratio)</div>', unsafe_allow_html=True)
             if debt_ratio is not None: st.plotly_chart(draw_pro_finance_chart(debt_ratio.index.strftime('%Y'), debt_ratio.values, "%", is_debt=True), use_container_width=True)
-            else: st.info("데이터 없음")
+            else: st.info("재무 데이터 누락")
             st.markdown('</div>', unsafe_allow_html=True)
 
     # [3] 오른쪽 AI 비서
@@ -182,12 +186,12 @@ if data is not None:
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]): st.markdown(f"<div style='font-size:1rem; color:white;'>{m['content']}</div>", unsafe_allow_html=True)
         
-        if prompt := st.chat_input("AI 비서에게 질문하세요."):
+        if prompt := st.chat_input("AI 비서에게 궁금한 점을 물어보세요."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
                 with st.chat_message("user"): st.write(prompt)
             if client:
-                history = [{"role": "system", "content": f"당신은 {stock['종목명']} 전문 AI 비서입니다."}]
+                history = [{"role": "system", "content": f"당신은 {stock['종목명']}의 모든 데이터를 분석하는 AI 비서입니다."}]
                 for m in st.session_state.messages[-5:]: history.append(m)
                 res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history)
                 ans = res.choices[0].message.content
