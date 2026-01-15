@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님의 시그니처 디자인)
+# 2) 디자인 CSS (임찬희님의 시그니처 디자인 + 텍스트 색상 통일)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -30,13 +30,18 @@ st.markdown("""
         border: none !important; font-size: 0.95rem !important; text-align: left !important; padding: 5px 0px !important;
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(4px); transition: 0.2s; }
+    
     .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-top: 15px; }
     .info-line { color: #ffffff !important; font-size: 1.1rem; font-weight: 700; margin-bottom: 10px; }
+    
+    /* [수정] AI 테마 브리핑 글씨를 흰색(#ffffff)으로 변경 */
     .theme-line { 
-        color: #00e5ff !important; font-size: 1.1rem; font-weight: 800; 
+        color: #ffffff !important; font-size: 1.1rem; font-weight: 700; 
         border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px;
     }
-    .highlight-mint { color: #00e5ff !important; }
+    .highlight-mint { color: #00e5ff !important; font-weight: 800; }
+    
+    div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 15px !important; padding: 10px !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -57,22 +62,21 @@ data, data_date = load_data()
 # Groq 클라이언트
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
 
-# [핵심 수정] 테마 분석 정확도 향상 프롬프트
+# [로직] 테마 분석 정확도 향상 프롬프트 (환각 방지 적용)
 def get_stock_brief(stock_name):
     if not client: return "AI 연결 실패"
     try:
-        # AI에게 기업의 본업(Core Business)을 먼저 파악하라고 명확히 지시
         prompt = (
-            f"1. 먼저 {stock_name}의 주요 사업 영역(예: 로봇, 반도체, 2차전지 등)을 확인하세요.\n"
-            f"2. 확인된 사업 영역을 바탕으로 최근 주가 상승 테마를 분석하세요.\n"
-            f"3. 반드시 '최근 [사업분야] 테마에 속해서 [이유] 중입니다' 형식으로 한 문장만 답변하세요.\n"
-            f"4. 뜬구름 잡는 금리나 환율 이야기는 배제하고 실제 산업 테마 위주로 답변하세요."
+            f"1. 먼저 {stock_name}의 주력 사업 영역을 파악하세요.\n"
+            f"2. 해당 사업과 관련된 최근 시장 테마와 주가 상승 이유를 분석하세요.\n"
+            f"3. 반드시 '최근 [테마명] 테마에 속해서 [이유] 중입니다' 형식으로 한 문장만 답변하세요.\n"
+            f"4. 거시경제 지표(금리 등)보다는 기업 본업의 테마에 집중하세요."
         )
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "당신은 한국 주식 시장의 섹터 분석 전문가입니다."},
+            messages=[{"role": "system", "content": "당신은 한국 주식 전문가입니다."},
                       {"role": "user", "content": prompt}],
-            max_tokens=150, temperature=0.3 # 온도를 낮춰서 환각 방지
+            max_tokens=200, temperature=0.3
         )
         return response.choices[0].message.content
     except:
@@ -82,7 +86,7 @@ def get_stock_brief(stock_name):
 if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
-    with st.spinner("AI가 첫 종목을 정밀 분석 중입니다..."):
+    with st.spinner("첫 종목 분석 중..."):
         st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
 
 # 4) 메인 레이아웃 (2.5:7.5)
@@ -95,7 +99,6 @@ if data is not None:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=850):
             m_col1, m_col2 = st.columns(2)
-            # KOSPI / KOSDAQ 리스트 반복문 (생략 - 기존과 동일)
             for m_df, m_name, m_key in [(df_kospi, "KOSPI", "k"), (df_kosdaq, "KOSDAQ", "q")]:
                 with (m_col1 if m_name=="KOSPI" else m_col2):
                     st.markdown(f'<div class="market-header">{m_name}</div>', unsafe_allow_html=True)
@@ -104,7 +107,7 @@ if data is not None:
                         if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
                             st.session_state.selected_stock = row.to_dict()
                             st.session_state.messages = []
-                            with st.spinner(f"{row['종목명']} 테마 분석 중..."):
+                            with st.spinner(f"{row['종목명']} 분석 중..."):
                                 st.session_state.current_brief = get_stock_brief(row['종목명'])
                             st.rerun()
 
@@ -112,7 +115,7 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">💬 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
         
-        # 차트 출력 (생략 - 기존 성공 로직 유지)
+        # 차트 출력
         ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
         try:
             chart_df = yf.Ticker(ticker_symbol).history(period="3mo")
@@ -124,7 +127,7 @@ if data is not None:
             st.plotly_chart(fig, use_container_width=True)
         except: pass
 
-        # --- 정보 박스 (개선된 테마 브리핑) ---
+        # --- 정보 박스 ---
         st.markdown(f"""
         <div class="report-box">
             <div class="info-line">
@@ -133,12 +136,11 @@ if data is not None:
                 <span class="highlight-mint">거래대금:</span> {stock.get('거래대금(억)', 0):,}억
             </div>
             <div class="theme-line">
-                🤖 AI 테마 브리핑: {st.session_state.get('current_brief', '분석 결과가 곧 표시됩니다.')}
+                <span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.get('current_brief', '분석 중...')}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # 채팅창 및 입력창 (기존 유지)
         chat_container = st.container(height=450)
         with chat_container:
             for m in st.session_state.messages:
