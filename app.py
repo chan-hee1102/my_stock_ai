@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 시그니처 디자인 + 헤더 박스 최적화)
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 + 헤더 박스 및 공간 최적화)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -52,7 +52,7 @@ st.markdown("""
     .analysis-title { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 15px; display: block; }
     .probability-text { color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; }
     
-    /* 재무제표 상단 헤더 바 (검정 얇은 영역) */
+    /* [완결] 재무제표 상단 헤더 바 (검정 얇은 영역) */
     .finance-header-box {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px;
         padding: 8px 15px; margin-bottom: 5px; width: 100%;
@@ -62,12 +62,10 @@ st.markdown("""
         color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0;
     }
 
-    /* 재무제표 컨테이너 */
+    /* 재무제표 카드: 불필요한 여백(빨간 박스) 제거 */
     .finance-card-compact {
-        background-color: transparent; 
-        padding: 0px; margin-top: 5px; 
-        min-height: auto !important;
-        display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
+        background-color: transparent; padding: 0px; margin-top: 5px; 
+        min-height: auto !important; display: flex !important; flex-direction: column !important;
     }
 
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
@@ -89,21 +87,20 @@ def load_data():
 data, data_date = load_data()
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
 
-# [로직 수정] AI 테마 분석: 한국어 강제 지침 추가
+# [로직 수정] AI 답변: 한국어 전용 지침 대폭 강화
 def get_stock_brief(stock_name):
     if not client: return "AI 분석 대기 중..."
     try:
-        # 시스템 메시지에 언어 제약 조건 강화
         prompt = (f"당신은 주식 전문가입니다. {stock_name}의 최근 이슈를 분석하여 "
                   f"'최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 답변하세요. "
-                  f"반드시 모든 문장은 한국어로만 작성하세요.")
+                  f"반드시 모든 단어와 문장은 한국어로만 작성하고, 한자나 일본어는 절대 섞지 마세요.")
         res = client.chat.completions.create(
-            model="llama-3.3-70b-versatile", 
+            model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "모든 답변은 반드시 한국어로만 작성하세요. 일본어나 다른 외국어는 절대 사용하지 마세요."},
+                {"role": "system", "content": "답변은 반드시 100% 한국어로만 작성하세요. 중국어(什么 등), 일본어는 금지입니다."},
                 {"role": "user", "content": prompt}
-            ], 
-            temperature=0.2
+            ],
+            temperature=0.1 # 답변의 일관성을 위해 온도를 더 낮춤
         )
         return res.choices[0].message.content
     except: return "분석 업데이트 중..."
@@ -124,7 +121,7 @@ def draw_compact_finance_chart(dates, values, unit, is_debt=False):
     ))
     fig.update_layout(
         template="plotly_dark", height=220, 
-        margin=dict(l=10, r=10, t=0, b=5), # 헤더 박스 밀착
+        margin=dict(l=10, r=10, t=0, b=5), # 헤더 박스에 바짝 밀착
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False),
         showlegend=False
@@ -197,7 +194,7 @@ if data is not None:
         </div>
         """, unsafe_allow_html=True)
 
-        # [D] 재무제표 차트 (헤더 박스 적용)
+        # [D] 재무제표 차트 (헤더 박스 디자인 적용)
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             st.markdown('<div class="finance-card-compact">', unsafe_allow_html=True)
@@ -213,7 +210,7 @@ if data is not None:
             else: st.info("데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # [3] 오른쪽 AI 비서
+    # [3] 오른쪽 AI 비서 (한국어 전용 지침 적용)
     with col_chat:
         st.markdown(f'<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
         chat_container = st.container(height=720)
@@ -226,12 +223,12 @@ if data is not None:
             with chat_container:
                 with st.chat_message("user"): st.write(prompt)
             if client:
-                # [로직 수정] AI 비서에게도 강력한 한국어 답변 지침 부여
+                # [수정] AI 비서에게 가장 강력한 한국어 답변 페르소나 부여
                 history = [
-                    {"role": "system", "content": f"당신은 {stock['종목명']} 전문 AI 비서입니다. 반드시 모든 답변은 한국어로만 작성하세요. 다른 외국어는 절대 사용하지 마세요."}
+                    {"role": "system", "content": f"당신은 {stock['종목명']} 전문 AI 비서입니다. 반드시 100% 한국어로만 답변하세요. 일본어(日本語), 중국어(中文) 등 외국어는 절대 사용하지 마세요. 한국어를 모국어로 사용하는 사람처럼 자연스럽게 대답하세요."}
                 ]
                 for m in st.session_state.messages[-5:]: history.append(m)
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history)
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history, temperature=0.2)
                 ans = res.choices[0].message.content
                 st.session_state.messages.append({"role": "assistant", "content": ans})
             st.rerun()
