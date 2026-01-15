@@ -12,12 +12,12 @@ from datetime import datetime, timedelta
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (재무 차트 '상단 밀착' 및 3분할 최적화)
+# 2) 디자인 CSS (임찬희님의 요청: 뉴스 영역 채우기 및 차트 밀착 정렬)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
     
-    /* 3분할 카드 디자인 */
+    /* 3분할 카드 디자인 고정 */
     [data-testid="stHorizontalBlock"] > div {
         background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
     }
@@ -43,24 +43,24 @@ st.markdown("""
     .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
     
-    /* [긴급수정] 재무 카드 영역: 상단 패딩을 5px로 줄여 차트를 제목에 붙임 */
+    /* [긴급수정] 재무 카드 영역: 상단 패딩을 줄이고 높이를 꽉 채워 차트가 처지지 않게 함 */
     .finance-card-fixed {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px;
-        padding: 5px 15px 5px 15px; margin-top: 10px; min-height: 520px; overflow: hidden;
+        padding: 10px 15px 5px 15px; margin-top: 10px; min-height: 520px; overflow: hidden;
         display: flex; flex-direction: column;
     }
-    .finance-label-fixed { color: #00e5ff; font-size: 1.1rem; font-weight: 800; margin-bottom: 10px; }
+    .finance-label-fixed { color: #00e5ff; font-size: 1.1rem; font-weight: 800; margin-bottom: 12px; }
 
-    /* 뉴스 아이템 스타일 */
-    .news-container { margin-bottom: 8px; padding: 8px; background: #161b22; border-radius: 6px; border-left: 3px solid #00e5ff; }
-    .news-title { color: #ffffff !important; font-size: 0.85rem; font-weight: 600; text-decoration: none !important; line-height: 1.3; display: block; }
+    /* 뉴스 아이템 스타일 (찬희님 요청: 빨간 네모칸 영역) */
+    .news-container { margin-bottom: 10px; padding: 10px; background: #161b22; border-radius: 8px; border-left: 3px solid #00e5ff; }
+    .news-title { color: #ffffff !important; font-size: 0.85rem; font-weight: 600; text-decoration: none !important; display: block; line-height: 1.4; }
     .news-title:hover { color: #00e5ff !important; }
 
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 및 AI 엔진
+# 3) 데이터 및 실시간 뉴스 로직
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -76,38 +76,38 @@ data, data_date = load_data()
 client = Groq(api_key=st.secrets.get("GROQ_API_KEY")) if st.secrets.get("GROQ_API_KEY") else None
 
 def get_stock_brief(stock_name):
-    if not client: return "AI 연결 실패"
+    if not client: return "AI 연결 필요"
     try:
-        prompt = (f"당신은 주식 전문가입니다. {stock_name}의 최근 상승 이슈를 분석하여 "
-                  f"'최근 [구체적 이슈]로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 한 문장만 답변하세요.")
+        prompt = (f"{stock_name}의 상승 이슈를 분석하여 '최근 [이슈명]으로 인한 [테마명] 테마에 속해서 상승 중입니다' 형식으로 한 문장 브리핑하세요.")
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0.2)
         return res.choices[0].message.content
-    except: return "분석 중..."
+    except: return "분석 업데이트 중..."
 
-def get_ai_news(stock_code):
+# [신규] 의미 있는 뉴스 선별 로직
+def get_meaningful_news(stock_code):
     try:
         url = f"https://finance.naver.com/item/news_news.naver?code={stock_code}"
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers)
         soup = BeautifulSoup(res.text, 'html.parser')
         news_data = []
-        for t in soup.select('.title a')[:12]:
+        for t in soup.select('.title a')[:10]:
             news_data.append({"title": t.text.strip(), "link": "https://finance.naver.com" + t['href']})
         
         if news_data and client:
             titles = "\n".join([f"{i}: {n['title']}" for i, n in enumerate(news_data)])
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", 
-                                                 messages=[{"role": "user", "content": f"이 뉴스 중 기업 가치에 영향이 있는 핵심 기사 3개의 인덱스(숫자)만 쉼표로 대답하세요.\n{titles}"}])
-            indices = [int(i.strip()) for i in res.choices[0].message.content.split(',') if i.strip().isdigit()]
+            filter_prompt = (f"이 뉴스 목록에서 '단순 등락' 기사는 제외하고, 기업의 신사업, 수주 등 핵심 이슈가 담긴 기사 3개의 숫자만 쉼표로 답하세요.\n{titles}")
+            res_f = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": filter_prompt}])
+            indices = [int(i.strip()) for i in res_f.choices[0].message.content.split(',') if i.strip().isdigit()]
             return [news_data[i] for i in indices if i < len(news_data)]
         return news_data[:3]
     except: return []
 
-# [완결 수정] 상단 여백(t=5)을 제거하여 차트를 위로 바짝 붙인 함수
+# [완결 수정] 여백을 완전히 제거하여 그래프를 상단으로 끌어올리는 함수
 def draw_pro_finance_chart(dates, values, unit, is_debt=False):
     display_values = values / 100000000 if "억" in unit else values
     fig = go.Figure()
-    fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="white", line_width=1.5)
     
     line_color = "#00e5ff" if (not is_debt and display_values[-1] > 0) or (is_debt and display_values[-1] < display_values[0]) else "#ff3366"
     
@@ -119,24 +119,24 @@ def draw_pro_finance_chart(dates, values, unit, is_debt=False):
     ))
     fig.update_layout(
         template="plotly_dark", height=280, 
-        margin=dict(l=10, r=10, t=5, b=5), # [핵심] 상단 여백을 5px로 줄여 위로 바짝 붙임
-        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117", # 배경색 강제 지정
+        margin=dict(l=10, r=10, t=5, b=5), # [핵심] 상단 마진을 5px로 최소화하여 위로 바짝 붙임
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d", zeroline=False),
         showlegend=False
     )
     return fig
 
-# 4) 메인 앱 레이아웃 (3분할 사령부 고정)
+# 4) 메인 레이아웃 (3분할 2 : 5 : 3)
 if data is not None:
     if "messages" not in st.session_state: st.session_state.messages = []
     if "selected_stock" not in st.session_state:
         st.session_state.selected_stock = data.iloc[0].to_dict()
         st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
-        st.session_state.current_news = get_ai_news(data.iloc[0]['종목코드'])
+        st.session_state.current_news = get_meaningful_news(data.iloc[0]['종목코드'])
 
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
-    # [1] 왼쪽 리스트
+    # [1] 왼쪽 종목 리스트
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=850):
@@ -150,17 +150,16 @@ if data is not None:
                         if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
                             st.session_state.selected_stock = row.to_dict()
                             st.session_state.messages = []
-                            with st.spinner("이슈 분석 중..."):
+                            with st.spinner("분석 중..."):
                                 st.session_state.current_brief = get_stock_brief(row['종목명'])
-                                st.session_state.current_news = get_ai_news(row['종목코드'])
+                                st.session_state.current_news = get_meaningful_news(row['종목코드'])
                             st.rerun()
 
-    # [2] 가운데 분석실
+    # [2] 가운데 분석 보드
     with col_main:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">📉 {stock["종목명"]} 전략 분석실</div>', unsafe_allow_html=True)
         
-        # 캔들 차트 (배경색 고정)
         ticker_symbol = stock['종목코드'] + (".KS" if "KOSPI" in stock['시장'] else ".KQ")
         try:
             ticker_data = yf.Ticker(ticker_symbol)
@@ -173,7 +172,7 @@ if data is not None:
             debt = (ticker_data.balance_sheet.loc['Total Debt'] / ticker_data.balance_sheet.loc['Stockholders Equity'] * 100).sort_index() if 'Total Debt' in ticker_data.balance_sheet.index else None
         except: income, debt = None, None
 
-        # 테마 브리핑 박스
+        # 테마 브리핑
         st.markdown(f"""
         <div class="report-box">
             <div class="info-line">
@@ -182,25 +181,22 @@ if data is not None:
                 <span class="highlight-mint">거래대금:</span> {stock.get('거래대금(억)', 0):,}억
             </div>
             <div class="theme-line">
-                <span class="highlight-mint">🤖 AI 비서 테마 브리핑:</span> {st.session_state.get('current_brief', '분석 중...')}
+                <span class="highlight-mint">🤖 AI 비서 테마 브리핑:</span> {st.session_state.get('current_brief', '분석 업데이트 중...')}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # [완결 수정] 재무 카드: 뉴스 피드를 상단에 배치하고 차트를 위로 바짝 붙임
+        # [완결 수정] 뉴스 피드를 상단에 배치하여 영역을 채우고 차트를 끌어올림
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">💰 연간 영업이익 추이</div>', unsafe_allow_html=True)
-            # 뉴스 피드 (빨간 박스 영역 채우기)
             for news in st.session_state.get('current_news', []):
                 st.markdown(f'<div class="news-container"><a href="{news["link"]}" target="_blank" class="news-title">● {news["title"]}</a></div>', unsafe_allow_html=True)
             if income is not None: st.plotly_chart(draw_pro_finance_chart(income.index.strftime('%Y'), income.values, "억"), use_container_width=True)
-            else: st.info("재무 데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
         with f_col2:
             st.markdown('<div class="finance-card-fixed"><div class="finance-label-fixed">📉 연간 부채비율 추이</div>', unsafe_allow_html=True)
             if debt is not None: st.plotly_chart(draw_pro_finance_chart(debt.index.strftime('%Y'), debt.values, "%", is_debt=True), use_container_width=True)
-            else: st.info("재무 데이터 없음")
             st.markdown('</div>', unsafe_allow_html=True)
 
     # [3] 오른쪽 AI 비서
