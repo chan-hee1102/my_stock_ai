@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (찬희님 시그니처 디자인 완벽 보존)
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 보존)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,23 +34,14 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
-    /* 채팅창 고대비/고선명 설정 (투명도 0%) */
     [data-testid="stChatMessage"] {
         background-color: #161b22 !important; border: 1px solid #30363d !important;
-        border-radius: 12px !important; padding: 20px !important;
+        border-radius: 12px !important; padding: 15px !important; margin-bottom: 10px !important;
     }
     [data-testid="stChatMessage"] * {
         color: #ffffff !important; opacity: 1 !important; font-size: 1.0rem !important; line-height: 1.6 !important;
     }
     [data-testid="stChatMessage"] strong { color: #00e5ff !important; font-weight: 800 !important; }
-
-    /* 뉴스 리포트 카드 디자인 */
-    .news-card {
-        background-color: #0d1117; border-left: 4px solid #00e5ff;
-        padding: 15px; margin-bottom: 12px; border-radius: 4px;
-    }
-    .news-title { color: #ffffff; font-weight: 700; font-size: 0.95rem; margin-bottom: 5px; }
-    .news-reason { color: #00e5ff; font-weight: 800; font-size: 0.85rem; }
 
     .investor-table {
         width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff;
@@ -74,7 +65,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 핵심 기능 함수
+# 3) 기능 함수
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -109,46 +100,18 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list) if data_list else None
     except Exception: return None
 
-def get_official_news_analysis(stock_name, code):
-    """AI 뉴스 필터링: 중복 제거 및 오피셜 재료만 추출""" [cite: 2026-01-16]
-    if not client: return []
-    try:
-        url = f"https://finance.naver.com/item/news_news.naver?code={code}"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-        soup = BeautifulSoup(res.text, 'html.parser')
-        titles = [t.text.strip() for t in soup.select('.title a')[:15]]
-        if not titles: return []
-        prompt = (f"{stock_name} 헤드라인: {titles}\n"
-                  f"위 리스트에서 기업 가치와 직결된(수주, 계약, 신사업 등) 오피셜 뉴스만 3개 골라 '뉴스제목 | 핵심요약' 형식으로만 답변하세요.")
-        res_ai = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "사족 없이 팩트 뉴스 리포트만 작성하십시오."}],
-            prompt=prompt, temperature=0.1
-        )
-        lines = res_ai.choices[0].message.content.strip().split('\n')
-        final_news = []
-        for line in lines:
-            if '|' in line:
-                t, r = line.split('|')
-                final_news.append({"title": t.strip(), "reason": r.strip()})
-        return final_news
-    except: return []
-
 def get_ai_expert_analysis(stock_name):
-    """AI 전문가 분석 고정 페르소나 적용""" [cite: 2026-01-16]
     if not client: return "AI 분석 대기 중."
     try:
-        prompt = (f"당신은 냉철한 주식 전략가입니다. {stock_name} 종목에 대해 다음 구조로만 보고하세요:\n"
-                  f"1. **[차트 흐름]**, **[수급 상태]**, **[핵심 재료]** 항목별로 1~2문장 요약.\n"
-                  f"2. 인사말, 경고 문구(조심해라 등)는 절대 금지.\n"
-                  f"3. 마지막은 '더 궁금한 점이 있으신가요?'로 마무리.")
+        prompt = (f"당신은 주식 시장 전략가입니다. {stock_name} 종목에 대해 불필요한 인사말이나 투자 경고 없이 "
+                  f"[차트 흐름], [수급 상태]를 중심으로 핵심만 전문가답게 요약 보고하세요.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "한국 최고의 퀀트 분석가 페르소나."}],
+            messages=[{"role": "system", "content": "팩트 중심 요약 보고 모드."}],
             prompt=prompt, temperature=0.2
         )
         return res.choices[0].message.content
-    except: return f"{stock_name} 데이터 분석 실패."
+    except: return f"{stock_name} 분석 오류."
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -162,7 +125,7 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
                       xaxis=dict(showgrid=False, dtick=1), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
     return fig
 
-# 4) 메인 앱 로직
+# 4) 메인 로직
 data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
@@ -200,7 +163,7 @@ if data is not None:
             try:
                 tk = yf.Ticker(ticker)
                 hist_raw = tk.history(period="3mo")
-                # [오류 수정] 종가가 0인 불완전한 최신 데이터 행 필터링 [cite: 2026-01-16]
+                # [오류 해결] 종가가 0인 불완전한 데이터 필터링
                 hist = hist_raw[hist_raw['Close'] > 0].tail(40)
                 
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
@@ -225,7 +188,7 @@ if data is not None:
 
         st.markdown(f"""<div class="report-box"><div class="info-line"><span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; <span class="highlight-mint">거래대금:</span> {stock.get('최근거래일거래대금(억)', 0):,}억</div></div>""", unsafe_allow_html=True)
 
-        # 재무제표 상단 배치 유지 [cite: 2026-01-16]
+        # 재무 차트 상단 배치 유지
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
@@ -238,13 +201,8 @@ if data is not None:
                 if debt is not None: st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # AI 핵심 뉴스 리포트 하단 배치 (중복/노이즈 제거 필터 작동) [cite: 2026-01-16]
-        st.markdown('<div class="section-header">🗞️ AI 실전 핵심 뉴스 리포트</div>', unsafe_allow_html=True)
-        news_list = get_official_news_analysis(stock['종목명'], stock['종목코드'])
-        if news_list:
-            for n in news_list:
-                st.markdown(f'<div class="news-card"><div class="news-title">📍 {n["title"]}</div><div class="news-reason">💡 핵심 요약: {n["reason"]}</div></div>', unsafe_allow_html=True)
-        else: st.info("현재 분석할 만한 주요 오피셜 뉴스가 없습니다.")
+        # 상승 확률 박스 하단 배치 (뉴스 취소 반영)
+        st.markdown('<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률</span><div style="color:#ffffff; font-size:1.1rem; font-weight:600;">데이터 산출 시스템 대기 중...</div></div>', unsafe_allow_html=True)
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
@@ -255,7 +213,7 @@ if data is not None:
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             with st.chat_message("assistant"):
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "핵심 위주 요약 보고."}] + st.session_state.messages)
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "핵심만 요약 보고."}] + st.session_state.messages)
                 full_res = res.choices[0].message.content
                 st.markdown(full_res)
                 st.session_state.messages.append({"role": "assistant", "content": full_res})
