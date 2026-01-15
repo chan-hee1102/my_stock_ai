@@ -37,19 +37,17 @@ st.markdown("""
     /* 채팅창 가독성 강화: 투명도 제거 및 고대비 설정 */
     [data-testid="stChatMessage"] {
         background-color: #161b22 !important; 
-        border: 1px solid #00e5ff !important;
+        border: 1px solid #30363d !important;
         border-radius: 12px !important;
-        padding: 20px !important;
-        margin-bottom: 15px !important;
+        padding: 15px !important;
+        margin-bottom: 10px !important;
     }
     [data-testid="stChatMessage"] p { 
         color: #ffffff !important; 
-        font-size: 1.05rem !important; 
-        line-height: 1.8 !important;
+        font-size: 1.0rem !important; 
+        line-height: 1.7 !important;
     }
-    /* AI 응답 내 핵심 포인트 강조 색상 */
     [data-testid="stChatMessage"] strong { color: #00e5ff !important; }
-    [data-testid="stChatMessage"] li { color: #e6edf3 !important; margin-bottom: 8px; }
 
     .investor-table {
         width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff;
@@ -110,23 +108,22 @@ def get_investor_trend(code):
         return None
 
 def get_ai_expert_analysis(stock_name):
-    """불필요한 조언 없이 팩트 위주의 요약 리포트 생성""" [cite: 2026-01-16]
+    """불필요한 조언 없이 팩트 위주의 요약 리포트 생성"""
     if not client: return "AI 비서 연결 불가."
     try:
-        # 프롬프트에서 '조심하라'는 멘트 금지 및 요약 강조 [cite: 2026-01-16]
-        prompt = (f"{stock_name}에 대한 **전술 분석 리포트**를 작성하세요.\n"
-                  f"1. **냉철한 전문가 어조**를 유지하고, '조심해라', '책임은 본인에게 있다' 같은 경고 멘트는 **절대 금지**입니다.\n"
-                  f"2. 불필요한 서술 없이 **[차트 흐름], [수급 상태], [핵심 이슈]** 세 항목으로 요약하세요.\n"
+        prompt = (f"{stock_name}에 대한 전술 분석 리포트를 작성하세요.\n"
+                  f"1. 냉철한 전문가 어조를 유지하고, '조심해라', '주의해라', '본인 책임' 같은 경고 멘트는 절대 하지 마세요.\n"
+                  f"2. 불필요한 사족 없이 [차트 흐름], [수급 상태], [핵심 이슈] 세 항목으로 요약하세요.\n"
                   f"3. 굵은 글씨와 불렛포인트를 적극 사용하여 가독성을 높이세요.\n"
-                  f"4. 마지막엔 '다른 궁금한 종목이 있습니까?'라고 짧게 마무리하세요.")
+                  f"4. 마지막엔 '더 궁금한 점이 있으신가요?'라고 짧게 마무리하세요.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "당신은 냉철한 퀀트 트레이더입니다. 인사말과 투자 경고는 생략하고 팩트 위주로 요약 보고하십시오."},
+            messages=[{"role": "system", "content": "당신은 냉철한 주식 전문가입니다. 인사말과 투자 경고는 생략하고 팩트 위주로 요약 보고하십시오."},
                       {"role": "user", "content": prompt}],
             temperature=0.2
         )
         return res.choices[0].message.content
-    except: return f"{stock_name} 데이터 분석 실패."
+    except: return f"{stock_name} 분석 오류."
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -140,7 +137,7 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
                       xaxis=dict(showgrid=False, dtick=1), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
     return fig
 
-# 4) 데이터 로드 및 상태 초기화
+# 4) 메인 로직
 data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
@@ -163,14 +160,13 @@ if data is not None:
                     is_sel = st.session_state.selected_stock['종목명'] == row['종목명']
                     if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_name}_{i}"):
                         st.session_state.selected_stock = row.to_dict()
-                        with st.spinner(f"{row['종목명']} 정밀 분석 중..."):
+                        with st.spinner(f"{row['종목명']} 분석 중..."):
                             new_analysis = get_ai_expert_analysis(row['종목명'])
                             st.session_state.messages = [{"role": "assistant", "content": new_analysis}]
                         st.rerun()
 
     with col_main:
         stock = st.session_state.selected_stock
-        # [수정] 제목에서 '전략 사령부' 제거 [cite: 2026-01-16]
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]}</div>', unsafe_allow_html=True)
         
         chart_col, supply_col = st.columns([7, 3])
@@ -178,7 +174,7 @@ if data is not None:
             ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
             try:
                 tk = yf.Ticker(ticker)
-                hist = tk.history(period="3mo").tail(40) # 40봉 유지 [cite: 2026-01-16]
+                hist = tk.history(period="3mo").tail(40)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
                                                      increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 fig.update_layout(
@@ -188,7 +184,7 @@ if data is not None:
                     xaxis=dict(tickformat="%m.%d", tickfont=dict(size=13, color='#ffffff', family="Arial"), gridcolor='rgba(255,255,255,0.07)')
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            except: st.error("데이터 로드 실패")
+            except: st.error("차트 로드 실패")
 
         with supply_col:
             invest_df = get_investor_trend(stock['종목코드'])
@@ -202,17 +198,8 @@ if data is not None:
                 st.markdown(html_code, unsafe_allow_html=True)
             else: st.info("수급 대기 중")
 
-        st.markdown(f"""
-        <div class="report-box">
-            <div class="info-line">
-                <span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; 
-                <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; 
-                <span class="highlight-mint">거래대금:</span> {stock.get('최근거래일거래대금(억)', 0):,}억
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown('<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률</span><div style="color:#ffffff; font-size:1.1rem; font-weight:600;">데이터 산출 완료...</div></div>', unsafe_allow_html=True)
+        st.markdown(f"""<div class="report-box"><div class="info-line"><span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; <span class="highlight-mint">거래대금:</span> {stock.get('최근거래일거래대금(억)', 0):,}억</div></div>""", unsafe_allow_html=True)
+        st.markdown('<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률</span><div style="color:#ffffff; font-size:1.1rem; font-weight:600;">분석 시스템 대기 중...</div></div>', unsafe_allow_html=True)
 
         f_col1, f_col2 = st.columns(2)
         try:
@@ -230,17 +217,13 @@ if data is not None:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
         with st.container(height=700):
             for m in st.session_state.messages:
-                with st.chat_message(m["role"]): st.markdown(m["content"]) 
+                with st.chat_message(m["role"]): st.markdown(m["content"])
         
         if prompt := st.chat_input("종목에 대해 궁금한 점을 입력하세요."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             with st.chat_message("assistant"):
-                # 채팅 중에도 불필요한 사족 방지 [cite: 2026-01-16]
-                res = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile", 
-                    messages=[{"role": "system", "content": "당신은 요약과 팩트 전달을 최우선으로 하는 주식 전문가입니다. 대답 끝에 질문이 더 있는지 물어보세요."}] + st.session_state.messages
-                )
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "한국 주식 전문가. 사족 없이 요약하여 답변하십시오."}] + st.session_state.messages)
                 full_res = res.choices[0].message.content
                 st.markdown(full_res)
                 st.session_state.messages.append({"role": "assistant", "content": full_res})
