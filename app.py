@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 시그니처 디자인 유지 + 수급표 스타일 추가) [cite: 2026-01-13]
+# 2) 디자인 CSS (임찬희님 시그니처 디자인)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -40,8 +40,8 @@ st.markdown("""
     }
     .investor-table th { background-color: #0d1117; color: #8b949e; padding: 5px; border-bottom: 1px solid #30363d; }
     .investor-table td { padding: 6px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; }
-    .val-plus { color: #ff3366; } /* 매수는 빨간색 */
-    .val-minus { color: #00e5ff; } /* 매도는 파란색 */
+    .val-plus { color: #ff3366; } /* 매수: 빨간색 */
+    .val-minus { color: #00e5ff; } /* 매도: 파란색 */
 
     .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
     .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
@@ -64,7 +64,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드 및 수급 데이터 크롤링 함수 [cite: 2026-01-15]
+# 3) 데이터 로드 및 수급 데이터 크롤링
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -82,9 +82,9 @@ def load_data():
         df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
     return df, latest_file.split('_')[-1].replace('.csv', '')
 
-@st.cache_data(ttl=1800) # 30분간 캐시 유지
+@st.cache_data(ttl=1800)
 def get_investor_trend(code):
-    """네이버 금융에서 투자자별 매매동향 크롤링 (데이터 미출력 문제 해결 버전)""" [cite: 2026-01-15]
+    """네이버 금융에서 투자자별 매매동향 크롤링"""
     try:
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
         headers = {
@@ -94,23 +94,22 @@ def get_investor_trend(code):
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 투자자별 매매동향 테이블 찾기
         table = soup.find('table', {'class': 'type2'})
         if not table: return None
         
         rows = table.find_all('tr', {'onmouseover': 'mouseOver(this)'})
-        data = []
-        for row in rows[:5]: # 최근 5거래일
+        data_list = []
+        for row in rows[:5]:
             cols = row.find_all('td')
             if len(cols) < 9: continue
             
-            date = cols[0].text.strip()[5:] # MM.DD 형식
+            date = cols[0].text.strip()[5:] 
             institution = int(cols[5].text.replace(',', '').strip())
             foreigner = int(cols[6].text.replace(',', '').strip())
-            data.append({"날짜": date, "기관": institution, "외인": foreigner})
+            data_list.append({"날짜": date, "기관": institution, "외인": foreigner})
             
-        return pd.DataFrame(data) if data else None
-    except Exception as e:
+        return pd.DataFrame(data_list) if data_list else None
+    except Exception:
         return None
 
 data, data_date = load_data()
@@ -172,7 +171,6 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
-        # [수정] 차트와 수급표 가로 배치 (7:3 비율) [cite: 2026-01-15]
         chart_col, supply_col = st.columns([7, 3])
         
         with chart_col:
@@ -187,7 +185,6 @@ if data is not None:
             except: turnover = 0
 
         with supply_col:
-            # [수정] 수급표 시각화 영역 [cite: 2026-01-15]
             invest_df = get_investor_trend(stock['종목코드'])
             if invest_df is not None:
                 html_code = '<table class="investor-table"><tr><th>날짜</th><th>외인</th><th>기관</th></tr>'
