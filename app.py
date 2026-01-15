@@ -12,7 +12,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 시그니처 디자인 유지)
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 + 채팅 가독성 극대화)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,6 +34,22 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
+    /* 채팅 메시지 가독성 강화 (투명도 제거 및 대비 향상) */
+    [data-testid="stChatMessage"] {
+        background-color: #0d1117 !important; 
+        border: 1px solid #30363d !important;
+        border-radius: 12px !important;
+        padding: 15px !important;
+        margin-bottom: 12px !important;
+    }
+    [data-testid="stChatMessage"] p { 
+        color: #e6edf3 !important; 
+        font-size: 1.0rem !important; 
+        line-height: 1.7 !important;
+    }
+    /* AI 응답 내 강조 텍스트 색상 */
+    [data-testid="stChatMessage"] strong { color: #00e5ff !important; }
+
     .investor-table {
         width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff;
     }
@@ -44,15 +60,8 @@ st.markdown("""
 
     .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
     .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
-    .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
     .highlight-mint { color: #00e5ff !important; font-weight: 800; }
-    .wide-analysis-box {
-        background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
-        padding: 30px; margin-bottom: 20px; text-align: center;
-        min-height: 220px; display: flex; flex-direction: column; justify-content: center; align-items: center;
-    }
-    .analysis-title { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 15px; display: block; }
-    .probability-text { color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; }
+    
     .finance-header-box {
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px;
         padding: 8px 15px; margin-bottom: 5px; width: 100%;
@@ -63,6 +72,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# 3) 핵심 기능 함수
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -82,10 +92,7 @@ def load_data():
 def get_investor_trend(code):
     try:
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': f'https://finance.naver.com/item/main.naver?code={code}'
-        }
+        headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         rows = soup.find_all('tr', {'onmouseover': 'mouseOver(this)'})
@@ -101,23 +108,23 @@ def get_investor_trend(code):
     except Exception:
         return None
 
-data, data_date = load_data()
-groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
-client = Groq(api_key=groq_api_key) if groq_api_key else None
-
-def get_stock_brief(stock_name):
-    if not client: return "AI 분석 대기 중..."
+def get_ai_expert_analysis(stock_name):
+    """종목 클릭 시 요약 및 시각적 가독성이 극대화된 전문가 분석 수행"""
+    if not client: return "AI 비서 연결 불가."
     try:
-        prompt = (f"{stock_name}의 최근 이슈를 분석하여 "
-                  f"'최근 [이슈]로 인한 [테마] 테마에 속해 상승 중' 형식으로 한국어로만 답변하세요.")
+        prompt = (f"당신은 실전 주식 투자 전문가입니다. {stock_name} 종목에 대해 다음 조건으로 분석하세요:\n"
+                  f"1. **불필요한 인사말 생략**하고 핵심 요약부터 시작할 것.\n"
+                  f"2. 마크다운(굵게, 불렛포인트)을 활용해 **가독성**을 높일 것.\n"
+                  f"3. **차트 흐름, 수급 상황, 주요 테마** 세 가지 관점으로 짧고 강하게 분석할 것.\n"
+                  f"4. 마지막엔 '질문이 있으신가요?'로 마무리할 것.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "100% 한국어로만 짧고 강력하게 대답하세요."},
+            messages=[{"role": "system", "content": "신뢰감 있는 투자 전략가. 가독성 좋고 세련된 분석 제공."},
                       {"role": "user", "content": prompt}],
-            temperature=0.1
+            temperature=0.3
         )
         return res.choices[0].message.content
-    except: return "분석 업데이트 중..."
+    except: return f"{stock_name} 분석 오류."
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -128,65 +135,58 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
                              line=dict(color=color, width=3), marker=dict(size=8, color=color, symbol='circle')))
     fig.update_layout(template="plotly_dark", height=200, margin=dict(l=10, r=10, t=30, b=10),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      xaxis=dict(showgrid=False, dtick=1), yaxis=dict(showgrid=True, gridcolor="#30363d"))
+                      xaxis=dict(showgrid=False, dtick=1), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
     return fig
+
+# 4) 데이터 로드 및 앱 로직
+data, data_date = load_data()
+groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
+client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 if data is not None:
     if "selected_stock" not in st.session_state:
         st.session_state.selected_stock = data.iloc[0].to_dict()
-        st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
-    if "messages" not in st.session_state: st.session_state.messages = []
-
+        initial_analysis = get_ai_expert_analysis(data.iloc[0]['종목명'])
+        st.session_state.messages = [{"role": "assistant", "content": initial_analysis}]
+    
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=800):
-            kospi_df = data[data["시장"] == "KOSPI"]
-            kosdaq_df = data[data["시장"] == "KOSDAQ"]
-            for m_df, m_name, m_key in [(kospi_df, "KOSPI", "k"), (kosdaq_df, "KOSDAQ", "q")]:
+            for m_name in ["KOSPI", "KOSDAQ"]:
+                m_df = data[data["시장"] == m_name]
                 st.markdown(f'<div class="market-header">{m_name} ({len(m_df)}개)</div>', unsafe_allow_html=True)
                 for i, row in m_df.iterrows():
                     is_sel = st.session_state.selected_stock['종목명'] == row['종목명']
-                    if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
+                    if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_name}_{i}"):
                         st.session_state.selected_stock = row.to_dict()
-                        st.session_state.current_brief = get_stock_brief(row['종목명'])
-                        st.session_state.messages = []
+                        with st.spinner(f"{row['종목명']} 분석 중..."):
+                            new_analysis = get_ai_expert_analysis(row['종목명'])
+                            st.session_state.messages = [{"role": "assistant", "content": new_analysis}]
                         st.rerun()
 
     with col_main:
         stock = st.session_state.selected_stock
-        st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
+        # [수정] 제목에서 '전략 사령부' 제거 [cite: 2026-01-16]
+        st.markdown(f'<div class="section-header">📈 {stock["종목명"]}</div>', unsafe_allow_html=True)
         
         chart_col, supply_col = st.columns([7, 3])
         with chart_col:
             ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
             try:
                 tk = yf.Ticker(ticker)
-                hist_full = tk.history(period="3mo")
-                hist = hist_full.tail(40)
-                
+                hist = tk.history(period="3mo").tail(40)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
                                                      increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
-                
-                # [수정] 폰트 두께 최적화 (Arial Black -> Arial)
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
-                    yaxis=dict(
-                        tickformat=",d", 
-                        tickfont=dict(size=13, color='#ffffff', family="Arial"), # 살짝 얇고 깔끔하게
-                        gridcolor='rgba(255, 255, 255, 0.07)'
-                    ),
-                    xaxis=dict(
-                        tickformat="%m.%d", 
-                        tickfont=dict(size=13, color='#ffffff', family="Arial"), # 살짝 얇고 깔끔하게
-                        gridcolor='rgba(255, 255, 255, 0.07)'
-                    )
+                    yaxis=dict(tickformat=",d", tickfont=dict(size=13, color='#ffffff', family="Arial"), gridcolor='rgba(255,255,255,0.07)'),
+                    xaxis=dict(tickformat="%m.%d", tickfont=dict(size=13, color='#ffffff', family="Arial"), gridcolor='rgba(255,255,255,0.07)')
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                turnover = stock.get('최근거래일거래대금(억)', 0)
-            except: turnover = 0
+            except: st.error("데이터 로드 실패")
 
         with supply_col:
             invest_df = get_investor_trend(stock['종목코드'])
@@ -198,23 +198,19 @@ if data is not None:
                     html_code += f'<tr><td>{r["날짜"]}</td><td class="{f_cls}">{r["외인"]:,}</td><td class="{i_cls}">{r["기관"]:,}</td></tr>'
                 html_code += "</table>"
                 st.markdown(html_code, unsafe_allow_html=True)
-            else:
-                st.info("수급 수집 중...")
+            else: st.info("수급 대기 중")
 
         st.markdown(f"""
         <div class="report-box">
             <div class="info-line">
                 <span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; 
                 <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; 
-                <span class="highlight-mint">거래대금:</span> {turnover:,}억
-            </div>
-            <div class="theme-line">
-                <span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.current_brief}
+                <span class="highlight-mint">거래대금:</span> {stock.get('최근거래일거래대금(억)', 0):,}억
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown('<div class="wide-analysis-box"><span class="analysis-title">🎯 AI 내일 상승 확률</span><div class="probability-text">데이터 분석 중...</div></div>', unsafe_allow_html=True)
+        st.markdown('<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률</span><div style="color:#ffffff; font-size:1.1rem; font-weight:600;">데이터 산출 대기 중...</div></div>', unsafe_allow_html=True)
 
         f_col1, f_col2 = st.columns(2)
         try:
@@ -232,10 +228,16 @@ if data is not None:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
         with st.container(height=700):
             for m in st.session_state.messages:
-                with st.chat_message(m["role"]): st.write(m["content"])
-        if prompt := st.chat_input("질문하세요..."):
+                with st.chat_message(m["role"]): st.markdown(m["content"]) # markdown 지원으로 가독성 향상
+        
+        if prompt := st.chat_input("종목에 대해 궁금한 점을 물어보세요."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            if client:
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "한국 주식 전문가"}]+st.session_state.messages)
-                st.session_state.messages.append({"role": "assistant", "content": res.choices[0].message.content})
-            st.rerun()
+            with st.chat_message("user"): st.markdown(prompt)
+            with st.chat_message("assistant"):
+                res = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile", 
+                    messages=[{"role": "system", "content": "한국 주식 전문가. 요약과 강조를 활용해 답변하십시오."}] + st.session_state.messages
+                )
+                full_res = res.choices[0].message.content
+                st.markdown(full_res)
+                st.session_state.messages.append({"role": "assistant", "content": full_res})
