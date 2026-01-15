@@ -9,6 +9,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 from bs4 import BeautifulSoup
+from groq import Groq  # AI 분석을 위해 추가
 
 # =========================
 # 1. 파라미터 설정 (찬희님 로직 반영)
@@ -32,8 +33,12 @@ RETRY_FULL  = 2
 OUT_DIR = "outputs"
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# [수정] API 키 불러오기: st.secrets 대신 os.getenv 사용 (GitHub Actions 호환)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
 # =========================
-# 2. 유틸리티 함수
+# 2. 유틸리티 및 데이터 수집
 # =========================
 def today_yyyymmdd():
     return datetime.today().strftime("%Y%m%d")
@@ -50,50 +55,33 @@ def safe_get(url, params):
     r.raise_for_status()
     return r.text
 
-# =========================
-# 3. 종목 리스트 수집 (KRX KIND)
-# =========================
 def get_listing():
     print("[INFO] KRX 종목 리스트 수집 중...")
     url = "https://kind.krx.co.kr/corpgeneral/corpList.do"
     r = requests.get(url, params={"method": "download"}, timeout=15)
-    
-    # pandas read_html은 리스트를 반환하므로 첫 번째 요소 선택
     df = pd.read_html(r.text, header=0)[0]
     df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
-    
     return pd.DataFrame({
         "Code": df["종목코드"],
         "Name": df["회사명"],
         "Market": df["시장구분"] if "시장구분" in df.columns else "Unknown"
     })
 
-# =========================
-# 4. 네이버 일봉 데이터 수집
-# =========================
 def get_ohlcv(code, count):
     url = "https://fchart.stock.naver.com/sise.nhn"
     params = {"symbol": code, "timeframe": "day", "count": str(count), "requestType": "0"}
-
     try:
         xml = safe_get(url, params)
         soup = BeautifulSoup(xml, "lxml-xml")
         items = soup.find_all("item")
         if not items: return None
-
         rows = []
         for it in items:
             d = it["data"].split("|")
-            rows.append({
-                "Date": pd.to_datetime(d[0]),
-                "Open": int(d[1]), "High": int(d[2]),
-                "Low":  int(d[3]), "Close": int(d[4]),
-                "Volume": int(d[5]),
-            })
-        df = pd.DataFrame(rows).sort_values("Date").set_index("Date")
-        return df
-    except:
-        return None
+            rows.append({"Date": pd.to_datetime(d[0]), "Open": int(d[1]), "High": int(d[2]),
+                         "Low":  int(d[3]), "Close": int(d[4]), "Volume": int(d[5])})
+        return pd.DataFrame(rows).sort_values("Date").set_index("Date")
+    except: return None
 
 def get_ohlcv_retry(code, count, retry):
     for _ in range(retry + 1):
@@ -103,7 +91,7 @@ def get_ohlcv_retry(code, count, retry):
     return None
 
 # =========================
-# 5. 기술적 분석 조건 체크
+# 3. 기술적 분석 조건 (찬희님 오리지널 로직)
 # =========================
 def has_vol_spike(df):
     rv = df.tail(LOOKBACK_20 + 2)
@@ -111,16 +99,15 @@ def has_vol_spike(df):
     r2 = rv["Volume"] / rv["Volume"].shift(2)
     return ((r1 >= VOL_RATIO_THRESHOLD) | (r2 >= VOL_RATIO_THRESHOLD)).iloc[2:].any()
 
-def ma(series, n):
-    return series.rolling(n).mean()
+def ma(series, n): return series.rolling(n).mean()
 
 def ichimoku_calc(df, n):
     return (df["High"].rolling(n).max() + df["Low"].rolling(n).min()) / 2
 
 def check_all_conditions(df):
     if len(df) < 260: return False
-
-    # A) 거래대금 조건
+    
+    # A) 거래대금
     turnover20 = (df.tail(20)["Close"] * df.tail(20)["Volume"]).max()
     last_turnover = df.iloc[-1]["Close"] * df.iloc[-1]["Volume"]
     if turnover20 < TURNOVER_MAX_20_THRESHOLD or last_turnover < LAST_TURNOVER_THRESHOLD:
@@ -129,23 +116,23 @@ def check_all_conditions(df):
     # B) 거래량 스파이크
     if not has_vol_spike(df): return False
 
-    # C) 이동평균선 정배열 (5 > 20 > 60)
+    # C) 이평선 정배열 & 종가 위치
     c = df["Close"]
     ma5, ma20, ma60 = ma(c, 5), ma(c, 20), ma(c, 60)
     ma120, ma240 = ma(c, 120), ma(c, 240)
     if not (ma5.iloc[-1] > ma20.iloc[-1] > ma60.iloc[-1]) or not (c.iloc[-1] > ma5.iloc[-1]):
         return False
 
-    # D) 장기선 기울기 (120일, 240일 우상향)
+    # D) 장기선 기울기
     lb = SLOPE_LOOKBACK_DAYS
     if not (ma120.iloc[-1] > ma120.iloc[-(lb+1)] and ma240.iloc[-1] > ma240.iloc[-(lb+1)]):
         return False
 
-    # E) 120일 신고가 갱신 근접 (최근 20일 내 120일 최고가 발생)
+    # E) 120일 신고가 근접
     if df["Close"].tail(20).max() < df["Close"].tail(120).max():
         return False
 
-    # F) 일목균형표 (전환선 > 기준선 & 종가 > 전환선)
+    # F) 일목균형표 조건
     tenkan = ichimoku_calc(df, ICHIMOKU_TENKAN)
     kijun  = ichimoku_calc(df, ICHIMOKU_KIJUN)
     if pd.isna(tenkan.iloc[-1]) or pd.isna(kijun.iloc[-1]): return False
@@ -155,12 +142,12 @@ def check_all_conditions(df):
     return True
 
 # =========================
-# 6. 메인 실행부
+# 4. 메인 실행부
 # =========================
 def main():
     start_time = time.time()
     listing = get_listing()
-    print(f"[INFO] 전체 대상 종목 수: {len(listing)}")
+    print(f"[INFO] 대상 종목 수: {len(listing)} | 스캔 시작...")
 
     results = []
     for i, row in listing.iterrows():
@@ -177,23 +164,19 @@ def main():
                 "최근거래일거래대금(억)": last_turnover
             })
 
-        # 진행 로그
         if (i + 1) % 100 == 0:
             print(f"[PROGRESS] {i+1}/{len(listing)} 완료 | 포착: {len(results)}개")
-        
         time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
 
-    # 결과 저장 및 출력
     if results:
         out = pd.DataFrame(results).sort_values("최근거래일거래대금(억)", ascending=False).reset_index(drop=True)
         path = os.path.join(OUT_DIR, f"final_result_{today_yyyymmdd()}.csv")
         out.to_csv(path, index=False, encoding="utf-8-sig")
-        print(f"\n[DONE] 포착된 종목 ({len(out)}개) 저장 완료: {path}")
-        print(out.head(10)) # 상위 10개 로그 출력
+        print(f"\n[DONE] {len(out)}개 종목 포착 완료: {path}")
     else:
-        print("\n[RESULT] 조건에 부합하는 종목이 없습니다.")
+        print("\n[RESULT] 포착된 종목이 없습니다.")
     
-    print(f"[INFO] 총 소요 시간: {round((time.time() - start_time)/60, 1)}분")
+    print(f"[INFO] 소요 시간: {round((time.time() - start_time)/60, 1)}분")
 
 if __name__ == "__main__":
     main()
