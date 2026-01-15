@@ -9,8 +9,10 @@ from bs4 import BeautifulSoup
 from groq import Groq
 from datetime import datetime
 
+# 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 유지 및 요청사항 반영)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -18,13 +20,15 @@ st.markdown("""
         background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
         display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
     }
+    /* 사이드바 메인 헤더 */
     .section-header { 
         color: #00e5ff !important; font-size: 1.1rem !important; font-weight: 800; 
         margin-bottom: 20px; border-left: 6px solid #00e5ff; padding-left: 15px; 
     }
+    /* KOSPI/KOSDAQ 헤더 글자 크기 상향 */
     .market-header {
-        background-color: #0d1117; color: #8b949e; font-size: 0.8rem; font-weight: 800;
-        text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #30363d;
+        background-color: #0d1117; color: #8b949e; font-size: 0.95rem !important; font-weight: 800;
+        text-align: center; padding: 8px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #30363d;
     }
     .stButton > button {
         width: 100% !important; background-color: transparent !important; color: #ffffff !important;
@@ -32,6 +36,7 @@ st.markdown("""
     }
     .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
     
+    /* 채팅창 선명도 극대화 */
     [data-testid="stChatMessage"] {
         background-color: #161b22 !important; 
         border: 1px solid #30363d !important;
@@ -45,10 +50,7 @@ st.markdown("""
         font-size: 1.0rem !important;
         line-height: 1.6 !important;
     }
-    [data-testid="stChatMessage"] strong {
-        color: #00e5ff !important;
-        font-weight: 800 !important;
-    }
+    [data-testid="stChatMessage"] strong { color: #00e5ff !important; }
 
     .investor-table {
         width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff;
@@ -72,6 +74,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# 3) 핵심 기능 함수
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -112,12 +115,12 @@ def get_ai_expert_analysis(stock_name):
     try:
         prompt = (f"당신은 주식 시장의 날카로운 분석가입니다. {stock_name} 종목에 대해 다음 조건으로 보고서를 쓰세요.\n"
                   f"1. 불필요한 서술이나 인사말은 생략하고 즉시 핵심 정보만 전달할 것.\n"
-                  f"2. '조심해라', '주의해라', '투자 판단은 본인 몫' 같은 사족은 절대로 넣지 말 것.\n"
+                  f"2. '조심해라', '주의해라' 같은 경고 멘트는 절대 하지 마세요.\n"
                   f"3. [차트 흐름], [수급 상태], [핵심 재료] 세 항목으로 아주 짤막하게 요약할 것.\n"
-                  f"4. 모든 항목은 불렛포인트를 활용해 한눈에 들어오게 할 것.")
+                  f"4. 마지막엔 '더 궁금한 점이 있으신가요?'라고 마무리할 것.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "팩트 위주로 요약 보고하는 전문가."},
+            messages=[{"role": "system", "content": "팩트 위주로 보고하는 전문가."},
                       {"role": "user", "content": prompt}],
             temperature=0.2
         )
@@ -136,6 +139,7 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
                       xaxis=dict(showgrid=False, dtick=1), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
     return fig
 
+# 4) 메인 로직
 data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
@@ -149,10 +153,10 @@ if data is not None:
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
     with col_list:
-        # 사이드바 날짜 형식 수정
+        # 사이드바 날짜 멘트 최적화
         d_obj = datetime.strptime(data_date, "%Y%m%d")
         week_days = ["월", "화", "수", "목", "금", "토", "일"]
-        sidebar_title = f"📂 {d_obj.strftime('%Y-%m-%d')}-{week_days[d_obj.weekday()]}요일 데이터 기준 종목 선정"
+        sidebar_title = f"📂 {d_obj.strftime('%Y-%m-%d')} ({week_days[d_obj.weekday()]}) 포착 리스트"
         st.markdown(f'<div class="section-header">{sidebar_title}</div>', unsafe_allow_html=True)
         
         with st.container(height=800):
@@ -203,7 +207,7 @@ if data is not None:
 
         st.markdown(f"""<div class="report-box"><div class="info-line"><span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; <span class="highlight-mint">거래대금:</span> {stock.get('최근거래일거래대금(억)', 0):,}억</div></div>""", unsafe_allow_html=True)
 
-        # 1. 재무 차트 상단 배치
+        # 재무 차트 상단 배치 유지
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
@@ -216,7 +220,7 @@ if data is not None:
                 if debt is not None: st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # 2. AI 내일 상승 확률 하단 배치
+        # 확률 박스 하단 배치 유지
         st.markdown('<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률</span><div style="color:#ffffff; font-size:1.1rem; font-weight:600;">데이터 산출 대기 중...</div></div>', unsafe_allow_html=True)
 
     with col_chat:
@@ -229,7 +233,7 @@ if data is not None:
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             with st.chat_message("assistant"):
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "핵심만 요약하여 답변하십시오."}] + st.session_state.messages)
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "요약하여 답변하십시오."}] + st.session_state.messages)
                 full_res = res.choices[0].message.content
                 st.markdown(full_res)
                 st.session_state.messages.append({"role": "assistant", "content": full_res})
