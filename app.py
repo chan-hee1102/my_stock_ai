@@ -9,9 +9,10 @@ from bs4 import BeautifulSoup
 from groq import Groq
 from datetime import datetime
 
-# 1) 페이지 설정 및 시그니처 디자인 유지 [cite: 2026-01-13]
+# 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
+# 2) 디자인 CSS (임찬희님 시그니처 디자인 유지 + 수급표 스타일 추가) [cite: 2026-01-13]
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -27,27 +28,43 @@ st.markdown("""
         background-color: #0d1117; color: #8b949e; font-size: 0.8rem; font-weight: 800;
         text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #30363d;
     }
-    
-    /* 수급 표 디자인 전용 CSS */
-    .investor-table {
-        width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: center; color: #ffffff;
+    .stButton > button {
+        width: 100% !important; background-color: transparent !important; color: #ffffff !important;
+        border: none !important; font-size: 0.9rem !important; text-align: left !important; padding: 4px 0px !important;
     }
-    .investor-table th { background-color: #0d1117; color: #8b949e; padding: 8px; border-bottom: 1px solid #30363d; }
-    .investor-table td { padding: 8px; border-bottom: 1px solid #1c2128; font-weight: 600; }
-    .val-plus { color: #ff3366; } /* 매수는 빨간색 (한국 기준) */
+    .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
+    
+    /* 수급표 전용 디자인 */
+    .investor-table {
+        width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: center; color: #ffffff;
+    }
+    .investor-table th { background-color: #0d1117; color: #8b949e; padding: 5px; border-bottom: 1px solid #30363d; }
+    .investor-table td { padding: 6px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; }
+    .val-plus { color: #ff3366; } /* 매수는 빨간색 */
     .val-minus { color: #00e5ff; } /* 매도는 파란색 */
 
-    .tactical-box { background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-    .grid-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; }
-    .grid-item { background: #0d1117; padding: 10px; border-radius: 8px; border: 1px solid #30363d; }
-    .item-label { color: #8b949e; font-size: 0.75rem; margin-bottom: 5px; }
-    .item-value { color: #ffffff; font-size: 1.1rem; font-weight: 800; }
-    
+    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
+    .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
+    .theme-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; border-top: 1px solid #30363d; padding-top: 12px; margin-top: 12px; }
+    .highlight-mint { color: #00e5ff !important; font-weight: 800; }
+    .wide-analysis-box {
+        background-color: #161b22; border: 1px dashed #00e5ff; border-radius: 12px;
+        padding: 30px; margin-bottom: 20px; text-align: center;
+        min-height: 220px; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    }
+    .analysis-title { color: #00e5ff; font-size: 1.2rem; font-weight: 800; margin-bottom: 15px; display: block; }
+    .probability-text { color: #ffffff; font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; }
+    .finance-header-box {
+        background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+        padding: 8px 15px; margin-bottom: 5px; width: 100%;
+        display: flex; align-items: center;
+    }
+    .finance-label-compact { color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }
     div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2) 데이터 로직 및 수급 데이터 크롤링 [cite: 2026-01-15]
+# 3) 데이터 로드 및 수급 데이터 크롤링 함수 [cite: 2026-01-15]
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -55,44 +72,82 @@ def load_data():
     if not files: return None, None
     latest_file = sorted(files)[-1]
     df = pd.read_csv(os.path.join(out_dir, latest_file))
+    
     if "시장" in df.columns:
         df["시장"] = df["시장"].astype(str).str.strip()
         df.loc[df["시장"].str.contains("유가|KOSPI", na=False), "시장"] = "KOSPI"
         df.loc[df["시장"].str.contains("코스닥|KOSDAQ", na=False), "시장"] = "KOSDAQ"
-    if "종목코드" in df.columns: df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+        
+    if "종목코드" in df.columns:
+        df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
     return df, latest_file.split('_')[-1].replace('.csv', '')
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800) # 30분간 캐시 유지
 def get_investor_trend(code):
-    """네이버 금융에서 투자자별 매매동향 크롤링"""
+    """네이버 금융에서 투자자별 매매동향 크롤링 (데이터 미출력 문제 해결 버전)""" [cite: 2026-01-15]
     try:
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': 'https://finance.naver.com/'
+        }
+        res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # 투자자별 매매동향 테이블 찾기
         table = soup.find('table', {'class': 'type2'})
+        if not table: return None
         
         rows = table.find_all('tr', {'onmouseover': 'mouseOver(this)'})
         data = []
-        for row in rows[:6]:  # 최근 6일치
+        for row in rows[:5]: # 최근 5거래일
             cols = row.find_all('td')
-            date = cols[0].text.strip()[5:]  # MM.DD 형식
-            # 외국인/기관 순매매량 (숫자만 추출)
-            foreigner = int(cols[6].text.replace(',', '').strip())
+            if len(cols) < 9: continue
+            
+            date = cols[0].text.strip()[5:] # MM.DD 형식
             institution = int(cols[5].text.replace(',', '').strip())
-            data.append({"날짜": date, "외국인": foreigner, "기관": institution})
-        return pd.DataFrame(data)
-    except:
-        return pd.DataFrame(columns=["날짜", "외국인", "기관"])
+            foreigner = int(cols[6].text.replace(',', '').strip())
+            data.append({"날짜": date, "기관": institution, "외인": foreigner})
+            
+        return pd.DataFrame(data) if data else None
+    except Exception as e:
+        return None
 
 data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
 
-# 3) 메인 레이아웃 (3분할 사령부)
+def get_stock_brief(stock_name):
+    if not client: return "AI 분석 대기 중..."
+    try:
+        prompt = (f"{stock_name}의 최근 이슈를 분석하여 "
+                  f"'최근 [이슈]로 인한 [테마] 테마에 속해 상승 중' 형식으로 한국어로만 답변하세요.")
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": "100% 한국어로만 짧고 강력하게 대답하세요."},
+                      {"role": "user", "content": prompt}],
+            temperature=0.1
+        )
+        return res.choices[0].message.content
+    except: return "분석 업데이트 중..."
+
+def draw_finance_chart(dates, values, unit, is_debt=False):
+    fig = go.Figure()
+    fig.add_hline(y=0, line_dash="dash", line_color="white")
+    color = "#00e5ff" if (not is_debt and values[-1] > 0) else "#ff3366"
+    fig.add_trace(go.Scatter(x=dates, y=values, mode='lines+markers+text',
+                             text=[f"{v:,.0f}{unit}" for v in values], textposition="top center",
+                             line=dict(color=color, width=3), marker=dict(size=8, color=color)))
+    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=10, r=10, t=10, b=10),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#30363d"))
+    return fig
+
+# 4) 메인 레이아웃
 if data is not None:
     if "selected_stock" not in st.session_state:
         st.session_state.selected_stock = data.iloc[0].to_dict()
+        st.session_state.current_brief = get_stock_brief(data.iloc[0]['종목명'])
     if "messages" not in st.session_state: st.session_state.messages = []
 
     col_list, col_main, col_chat = st.columns([2, 5, 3])
@@ -100,13 +155,16 @@ if data is not None:
     with col_list:
         st.markdown(f'<div class="section-header">📂 {data_date} 포착</div>', unsafe_allow_html=True)
         with st.container(height=800):
-            for m_name in ["KOSPI", "KOSDAQ"]:
-                m_df = data[data["시장"] == m_name]
+            kospi_df = data[data["시장"] == "KOSPI"]
+            kosdaq_df = data[data["시장"] == "KOSDAQ"]
+            
+            for m_df, m_name, m_key in [(kospi_df, "KOSPI", "k"), (kosdaq_df, "KOSDAQ", "q")]:
                 st.markdown(f'<div class="market-header">{m_name} ({len(m_df)}개)</div>', unsafe_allow_html=True)
                 for i, row in m_df.iterrows():
                     is_sel = st.session_state.selected_stock['종목명'] == row['종목명']
-                    if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_name}_{i}"):
+                    if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_key}_{i}"):
                         st.session_state.selected_stock = row.to_dict()
+                        st.session_state.current_brief = get_stock_brief(row['종목명'])
                         st.session_state.messages = []
                         st.rerun()
 
@@ -114,54 +172,76 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]} 전략 사령부</div>', unsafe_allow_html=True)
         
-        # [신규] 차트와 수급 표를 가로로 배치
+        # [수정] 차트와 수급표 가로 배치 (7:3 비율) [cite: 2026-01-15]
         chart_col, supply_col = st.columns([7, 3])
         
         with chart_col:
-            ticker_sym = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
+            ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
             try:
-                tk = yf.Ticker(ticker_sym)
+                tk = yf.Ticker(ticker)
                 hist = tk.history(period="3mo")
-                fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
-                                                     increasing_line_color='#00e5ff', decreasing_line_color='#ff3366')])
+                fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#00e5ff', decreasing_line_color='#ff3366')])
                 fig.update_layout(template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
-            except: st.error("차트 로딩 실패")
+                turnover = stock.get('최근거래일거래대금(억)', 0)
+            except: turnover = 0
 
         with supply_col:
-            # [신규] 수급 데이터 표 시각화 (찬희님 그림 반영)
+            # [수정] 수급표 시각화 영역 [cite: 2026-01-15]
             invest_df = get_investor_trend(stock['종목코드'])
-            if not invest_df.empty:
-                table_html = '<table class="investor-table"><tr><th>날짜</th><th>외국인</th><th>기관</th></tr>'
-                for _, row in invest_df.iterrows():
-                    f_cls = "val-plus" if row['외국인'] > 0 else "val-minus"
-                    i_cls = "val-plus" if row['기관'] > 0 else "val-minus"
-                    table_html += f"""
+            if invest_df is not None:
+                html_code = '<table class="investor-table"><tr><th>날짜</th><th>외인</th><th>기관</th></tr>'
+                for _, r in invest_df.iterrows():
+                    f_cls = "val-plus" if r['외인'] > 0 else "val-minus"
+                    i_cls = "val-plus" if r['기관'] > 0 else "val-minus"
+                    html_code += f"""
                     <tr>
-                        <td>{row['날짜']}</td>
-                        <td class="{f_cls}">{row['외국인']:,}</td>
-                        <td class="{i_cls}">{row['기관']:,}</td>
+                        <td>{r['날짜']}</td>
+                        <td class="{f_cls}">{r['외인']:,}</td>
+                        <td class="{i_cls}">{r['기관']:,}</td>
                     </tr>
                     """
-                table_html += "</table>"
-                st.markdown(table_html, unsafe_allow_html=True)
+                html_code += "</table>"
+                st.markdown(html_code, unsafe_allow_html=True)
             else:
-                st.write("수급 데이터 없음")
+                st.info("수급 데이터 수집 중...")
 
-        # 전술 및 백테스팅 영역 (설계 기반) [cite: 2026-01-15]
         st.markdown(f"""
-        <div class="tactical-box">
-            <div class="section-header" style="border:none; text-align:center; font-size:1.1rem;">🛠️ AI 전략 사령부: {stock['종목명']} 판독</div>
-            <div class="grid-container">
-                <div class="grid-item"><div class="item-label">시장 수급</div><div class="item-value">분석중</div></div>
-                <div class="grid-item"><div class="item-label">패턴 신뢰도</div><div class="item-value signal-mint">85%</div></div>
-                <div class="grid-item"><div class="item-label">익일 예상</div><div class="item-value">준비완료</div></div>
+        <div class="report-box">
+            <div class="info-line">
+                <span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; 
+                <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; 
+                <span class="highlight-mint">거래대금:</span> {turnover:,}억
+            </div>
+            <div class="theme-line">
+                <span class="highlight-mint">🤖 AI 테마 브리핑:</span> {st.session_state.current_brief}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # 재무 차트 등 하단부 생략(기존 유지)
+        st.markdown('<div class="wide-analysis-box"><span class="analysis-title">🎯 AI 내일 상승 확률</span><div class="probability-text">데이터 분석 중...</div><button style="background:#00e5ff; color:#000; border:none; padding:8px 20px; border-radius:20px; font-weight:800;">데이터 산출 중</button></div>', unsafe_allow_html=True)
+
+        f_col1, f_col2 = st.columns(2)
+        try:
+            income = tk.financials.loc['Operating Income'].sort_index() / 1e8
+            debt = (tk.balance_sheet.loc['Total Debt'] / tk.balance_sheet.loc['Stockholders Equity'] * 100).sort_index()
+        except: income, debt = None, None
+
+        with f_col1:
+            st.markdown('<div class="finance-header-box"><span class="finance-label-compact">💰 연간 영업이익 (억)</span></div>', unsafe_allow_html=True)
+            if income is not None: st.plotly_chart(draw_finance_chart(income.index.year, income.values, "억"), use_container_width=True)
+        with f_col2:
+            st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 (%)</span></div>', unsafe_allow_html=True)
+            if debt is not None: st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", True), use_container_width=True)
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        # 채팅 로직 생략(기존 유지)
+        with st.container(height=700):
+            for m in st.session_state.messages:
+                with st.chat_message(m["role"]): st.write(m["content"])
+        if prompt := st.chat_input("질문하세요..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            if client:
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "한국어 주식 전문가"}]+st.session_state.messages)
+                st.session_state.messages.append({"role": "assistant", "content": res.choices[0].message.content})
+            st.rerun()
