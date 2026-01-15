@@ -9,7 +9,7 @@ from datetime import datetime
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (블랙 & 민트 디자인 유지)
+# 2) 디자인 CSS
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -34,7 +34,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 데이터 로드
+# 3) 데이터 로드 로직
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -57,7 +57,7 @@ if "messages" not in st.session_state: st.session_state.messages = []
 if data is not None and "selected_stock" not in st.session_state:
     st.session_state.selected_stock = data.iloc[0].to_dict()
 
-# Gemini 클라이언트 (Secrets 사용)
+# Gemini 클라이언트 (404 방지를 위한 모델 고정)
 def get_client():
     key = st.secrets.get("GEMINI_API_KEY")
     if not key: return None
@@ -89,9 +89,9 @@ if data is not None:
         with chat_container:
             st.markdown(f"""
             <div class="report-box"><div class="report-text">
-                <span class="highlight-mint">● 현재 시점:</span> {datetime.now().strftime('%Y-%m-%d')} 기준 분석<br>
-                <span class="highlight-mint">● 엔진:</span> Gemini 1.5 Pro (최신 버전)<br>
-                <span class="highlight-mint">● 검색 모드:</span> 실시간 구글 검색 및 심층 추론 적용 중
+                <span class="highlight-mint">● 분석 대상:</span> {stock["종목명"]}<br>
+                <span class="highlight-mint">● 시스템:</span> Gemini 1.5 Pro (Enterprise Grade)<br>
+                <span class="highlight-mint">● 모드:</span> 실시간 구글 검색 및 Deep-Reasoning 적용 중
             </div></div>
             """, unsafe_allow_html=True)
 
@@ -99,35 +99,33 @@ if data is not None:
                 with st.chat_message(m["role"]):
                     st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{m['content']}</div>", unsafe_allow_html=True)
 
-        # --- AI 채팅 로직 (Gemini 1.5 Pro 적용) ---
-        if prompt := st.chat_input(f"{stock['종목명']}에 대해 심층 분석을 요청해보세요!"):
+        # --- AI 채팅 로직 (404 에러 원천 차단 모델명 적용) ---
+        if prompt := st.chat_input(f"{stock['종목명']}의 향후 전망을 물어보세요!"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{prompt}</div>", unsafe_allow_html=True)
             
             if client:
-                with st.status("AI 커맨더가 심층 분석 중입니다...", expanded=True) as status:
+                with st.status("AI 커맨더가 분석 중...", expanded=True) as status:
                     try:
-                        st.write("🔍 실시간 구글 데이터 검색 및 대조 중...")
+                        st.write("🔍 구글 실시간 데이터 크롤링 중...")
                         history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-10:]])
                         
                         instruction = (
-                            f"당신은 {stock['종목명']}의 최고 주식 전략가입니다. 오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}입니다.\n"
-                            f"지침:\n"
-                            f"1. '구글 검색' 도구를 활용해 실시간 뉴스, 공시, 재무 수치를 철저히 확인하세요.\n"
-                            f"2. 단순 정보 나열이 아닌, 데이터에 기반한 투자 전략과 리스크를 심도 있게 분석하세요.\n"
-                            f"3. 모든 답변은 텍스트와 표 형식으로 깔끔하게 구성하세요.\n"
-                            f"4. 대화의 맥락을 유지하며 전문가다운 어조로 답변하세요.\n\n"
-                            f"이전 대화 내역:\n{history_context}"
+                            f"당신은 {stock['종목명']} 주식 분석 전문가입니다. 현재 날짜 {datetime.now().strftime('%Y-%m-%d')} 기준의 최신 정보를 제공하세요.\n"
+                            f"반드시 '구글 검색' 도구를 사용하여 최신 뉴스 및 주가 수치를 확인하고 답변하세요.\n"
+                            f"분석은 객관적이어야 하며, 텍스트와 표를 적절히 섞어서 가독성 좋게 답변하세요.\n\n"
+                            f"이전 대화:\n{history_context}"
                         )
                         
                         google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
-                        st.write("🧠 Pro 엔진 추론 및 리포트 작성 중...")
-                        # 유료 계정의 이점을 살려 gemini-1.5-pro-latest로 변경
+                        st.write("🧠 Pro 엔진 분석 보고서 작성 중...")
+                        
+                        # [핵심] 404 에러 방지를 위해 모델명을 가장 표준적인 이름으로 고정
                         response = client.models.generate_content(
-                            model="gemini-1.5-pro-latest", 
-                            contents=f"{instruction}\n\n사용자 질문: {prompt}",
+                            model="gemini-1.5-pro", 
+                            contents=f"{instruction}\n\n질문: {prompt}",
                             config=types.GenerateContentConfig(tools=[google_search_tool])
                         )
                         
@@ -138,16 +136,15 @@ if data is not None:
                                     response_text += part.text
                         
                         if not response_text:
-                            response_text = "⚠️ 상세 리포트를 생성하는 데 일시적인 제약이 발생했습니다. 다시 시도해 주시겠습니까?"
+                            response_text = "⚠️ 현재 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요."
 
-                        status.update(label="✅ 심층 분석 리포트 생성 완료!", state="complete", expanded=False)
+                        status.update(label="✅ 분석 완료", state="complete", expanded=False)
                         with st.chat_message("assistant"):
                             st.markdown(f"<div style='font-size:1.15rem; color:#ffffff;'>{response_text}</div>", unsafe_allow_html=True)
                         st.session_state.messages.append({"role": "assistant", "content": response_text})
                     
                     except Exception as e:
                         status.update(label="❌ 오류 발생", state="error", expanded=True)
-                        st.error(f"상세 오류: {str(e)}")
-                        st.session_state.messages.append({"role": "assistant", "content": f"⚠️ 오류 발생: {str(e)}"})
+                        st.error(f"오류 내용: {str(e)}")
             
             st.rerun()
