@@ -10,8 +10,15 @@ from groq import Groq
 from datetime import datetime
 import numpy as np
 
-# 1) 페이지 설정
+# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지를 위해 최상단 배치)
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
+
+if "selected_stock" not in st.session_state:
+    st.session_state.selected_stock = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "initial_analysis" not in st.session_state:
+    st.session_state.initial_analysis = None
 
 # 2) 디자인 CSS (찬희님 제공 최종본 100% 유지)
 st.markdown("""
@@ -63,7 +70,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 기능 함수
+# 3) 기능 함수 정의
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -119,30 +126,29 @@ def calculate_technical_probability(code, market):
     except: return 50, "분석 시스템 대기"
 
 def get_latest_news(ticker_symbol):
-    """yfinance를 통한 실시간 뉴스 수집"""
     try:
         tk = yf.Ticker(ticker_symbol)
         news = tk.news[:3]
-        if not news: return "최근 관련 뉴스가 없습니다."
-        return "\n".join([f"- {n['title']}" for n in news])
-    except: return "뉴스를 가져오지 못했습니다."
+        if not news: return "최근 주요 뉴스가 없습니다."
+        return "\n".join([f"● {n['title']}" for n in news])
+    except: return "뉴스 데이터를 가져오지 못했습니다."
 
-def get_ai_briefing(stock_name, ticker_symbol, prob):
-    """최신 뉴스 기반 AI 리포트 생성"""
+def get_ai_expert_analysis(stock_name, ticker_symbol, prob):
     if not client: return "AI 비서 연결 불가."
-    news_text = get_latest_news(ticker_symbol)
+    news_context = get_latest_news(ticker_symbol)
     try:
-        prompt = (f"당신은 {stock_name} 전문 전략가입니다. 다음 데이터를 바탕으로 리포트를 작성하세요.\n"
-                  f"1. 최신 뉴스: {news_text}\n2. 상승 확률: {prob}%\n\n"
-                  f"구조:\n1. **[최신 소식]**: 뉴스 요약 및 시장 분위기\n2. **[기술 분석]**: 차트/수급 기반 짧은 분석\n3. **[전략 제언]**: 대응 방안 한 줄\n"
-                  f"전문적이고 냉철하게, 인사말 없이 작성하세요.")
+        # 프롬프트 수정: 한국어 전용 지침 추가
+        prompt = (f"당신은 {stock_name} 전문 전략가입니다. 아래 데이터를 분석하세요.\n"
+                  f"1. 최신 뉴스: {news_context}\n2. 상승 확률: {prob}%\n\n"
+                  f"구조:\n1. **[최신 이슈]**: 뉴스 요약\n2. **[기술 분석]**: 차트/수급 전략\n3. **[전략 제언]**: 대응 방안 한 줄\n"
+                  f"반드시 전문적이고 냉철하게 작성하되, 모든 답변은 한국어로만 작성하세요. 중국어나 일본어는 절대 사용하지 마세요.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "주식 분석 전문가."}, {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": "주식 분석 전문가. 한국어로만 답변함."}, {"role": "user", "content": prompt}],
             temperature=0.2
         )
         return res.choices[0].message.content
-    except: return f"{stock_name} 분석 로딩 실패."
+    except: return f"{stock_name} 데이터를 분석 중입니다."
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -152,17 +158,14 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
     fig.update_layout(template="plotly_dark", height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
     return fig
 
-# 4) 메인 로직
+# 4) 데이터 로드 및 실행
 data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 if data is not None:
-    # [에러 해결] 세션 상태 초기화 (AttributeError 방지)
-    if "selected_stock" not in st.session_state:
+    if st.session_state.selected_stock is None:
         st.session_state.selected_stock = data.iloc[0].to_dict()
-        st.session_state.messages = []
-        st.session_state.initial_analysis = None
 
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
@@ -176,7 +179,7 @@ if data is not None:
                     is_sel = st.session_state.selected_stock['종목명'] == row['종목명']
                     if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"btn_{m_name}_{i}"):
                         st.session_state.selected_stock = row.to_dict()
-                        st.session_state.initial_analysis = None # 분석 초기화
+                        st.session_state.initial_analysis = None
                         st.session_state.messages = []
                         st.rerun()
 
@@ -191,7 +194,15 @@ if data is not None:
             try:
                 hist = tk.history(period="3mo").tail(40)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
-                fig.update_layout(template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), xaxis_rangeslider_visible=False)
+                # [수정] 차트 배경색을 명시적으로 다크 컬러(#1c2128)로 고정
+                fig.update_layout(
+                    template="plotly_dark", 
+                    height=320, 
+                    margin=dict(l=0, r=0, t=0, b=0), 
+                    paper_bgcolor="#1c2128", 
+                    plot_bgcolor="#1c2128", 
+                    xaxis_rangeslider_visible=False
+                )
                 st.plotly_chart(fig, use_container_width=True)
             except: st.error("차트 로드 실패")
         with c2:
@@ -225,7 +236,7 @@ if data is not None:
         # 자동 분석 브리핑 생성
         if st.session_state.initial_analysis is None:
             with st.spinner("최신 소식 분석 중..."):
-                st.session_state.initial_analysis = get_ai_briefing(stock['종목명'], ticker_sym, prob)
+                st.session_state.initial_analysis = get_ai_expert_analysis(stock['종목명'], ticker_sym, prob)
         
         with st.container(height=700):
             with st.chat_message("assistant", avatar="🤖"):
@@ -237,7 +248,11 @@ if data is not None:
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             with st.chat_message("assistant", avatar="🤖"):
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
+                # 추가 질문 답변도 한국어로 제한
+                res = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile", 
+                    messages=[{"role": "system", "content": "한국어 주식 분석 전문가. 한국어로만 답변할 것."}, {"role": "user", "content": prompt}]
+                )
                 ans = res.choices[0].message.content
                 st.markdown(ans)
                 st.session_state.messages.append({"role": "assistant", "content": ans})
