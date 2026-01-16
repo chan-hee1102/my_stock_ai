@@ -13,7 +13,7 @@ import numpy as np
 # 1) 페이지 설정
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 2) 디자인 CSS (임찬희님 제공 최종 코드 기준)
+# 2) 디자인 CSS (임찬희님 제공 최종 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -103,48 +103,31 @@ def get_investor_trend(code):
     except Exception: return None
 
 def calculate_technical_probability(code, market):
-    """나열하신 모든 기술적 지표를 활용한 1년 백테스팅 확률 계산 엔진"""
     try:
         ticker = code + (".KS" if market == "KOSPI" else ".KQ")
         df = yf.download(ticker, period="1y", interval="1d", progress=False)
         if df.empty or len(df) < 40: return 50, "데이터 부족"
-        
-        # [오류 해결] 0원 데이터 행 제거
         df = df[(df['Close'] > 0) & (df['Open'] > 0)].copy()
         
-        # 1. 지표 계산
         close = df['Close']
         high = df['High']
         low = df['Low']
         
-        # 이동평균선 및 이격도
         df['MA5'] = close.rolling(5).mean()
         df['MA20'] = close.rolling(20).mean()
         df['Disparity'] = (close / df['MA20']) * 100
         
-        # RSI
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         df['RSI'] = 100 - (100 / (1 + (gain / loss)))
         
-        # 볼린저밴드 및 엔벨로프
         df['std'] = close.rolling(20).std()
         df['BB_up'] = df['MA20'] + (df['std'] * 2)
-        df['Env_up'] = df['MA20'] * 1.1
         
-        # 캔들 꼬리 분석
-        df['Upper_Wick'] = high - np.maximum(df['Open'], close)
-        df['Lower_Wick'] = np.minimum(df['Open'], close) - low
-        
-        # 2. 현재 패턴 정의 (오늘의 상태)
         curr = df.iloc[-1]
-        
-        # 3. 과거 1년 데이터 중 유사 패턴 탐색 (백테스팅)
-        # RSI, 이격도, 캔들 모양이 유사한 날짜들 필터링
         df['Next_Day_Up'] = (df['Close'].shift(-1) > df['Close']).astype(int)
         
-        # 유사성 조건: RSI ±5, 이격도 ±3% 범위 내
         similar_days = df[
             (df['RSI'] > curr['RSI'] - 7) & (df['RSI'] < curr['RSI'] + 7) &
             (df['Disparity'] > curr['Disparity'] - 5) & (df['Disparity'] < curr['Disparity'] + 5)
@@ -154,25 +137,30 @@ def calculate_technical_probability(code, market):
             prob = int(similar_days['Next_Day_Up'].mean() * 100)
             return min(max(prob, 15), 92), "기술적 패턴 매칭 완료"
         return 53, "추세 기반 기본 분석"
-    except:
-        return 50, "분석 시스템 대기"
+    except: return 50, "분석 시스템 대기"
 
 def get_ai_expert_analysis(stock_name, prob):
-    if not client: return "AI 비서 연결 불가."
+    if not client: return "AI 비서 연결 불가 (API 키 확인 필요)."
     try:
-        prompt = (f"당신은 대한민국 최고의 주식 전략가입니다. {stock_name} 종목의 기술적 상승 확률이 {prob}%로 계산되었습니다.\n"
-                  f"다음 구조로만 사족 없이 전문가답게 분석 보고하세요:\n"
-                  f"1. **[차트 흐름]**: 현재 이동평균선과 캔들 패턴 분석\n"
-                  f"2. **[수급 상태]**: 최근 외인/기관 매매동향 요약\n"
-                  f"3. **[핵심 요약]**: 상승 확률의 근거 한 줄 요약\n"
-                  f"인사말이나 투자 경고(조심해라 등)는 절대로 하지 마세요.")
+        # 사진 1번과 같은 리포트 형식을 유도하는 정교한 프롬프트
+        prompt = (f"{stock_name} 종목의 기술적 상승 확률이 {prob}%입니다. 전문 투자 전략가로서 분석 리포트를 작성하세요.\n\n"
+                  f"반드시 다음 형식을 지키세요:\n"
+                  f"1. **차트 흐름**: 현재 캔들과 이평선 상태 분석\n"
+                  f"2. **수급 상태**: 최근 기관/외인의 특징적 움직임\n"
+                  f"3. **핵심 이슈**: 현재 시장에서 주목하는 모멘텀\n\n"
+                  f"불필요한 인사말이나 경고문구는 생략하고 냉철하게 분석하세요.")
+        
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "팩트 위주로 요약 보고하는 냉철한 전문가."}],
-            prompt=prompt, temperature=0.2
+            messages=[
+                {"role": "system", "content": "당신은 냉철한 주식 분석 전문가입니다. 마크다운 형식을 활용해 가독성 좋게 보고합니다."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2
         )
         return res.choices[0].message.content
-    except: return f"{stock_name} 데이터 분석 중입니다."
+    except Exception as e:
+        return f"분석 리포트를 생성하는 중 오류가 발생했습니다: {str(e)}"
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -192,13 +180,16 @@ groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 if data is not None:
+    # 세션 초기화
     if "selected_stock" not in st.session_state:
         st.session_state.selected_stock = data.iloc[0].to_dict()
         prob, _ = calculate_technical_probability(data.iloc[0]['종목코드'], data.iloc[0]['시장'])
-        st.session_state.messages = [{"role": "assistant", "content": get_ai_expert_analysis(data.iloc[0]['종목명'], prob)}]
-    
+        st.session_state.initial_analysis = get_ai_expert_analysis(data.iloc[0]['종목명'], prob)
+        st.session_state.messages = []
+
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
+    # --- 왼쪽: 포착 리스트 ---
     with col_list:
         d_obj = datetime.strptime(data_date, "%Y%m%d")
         week_days = ["월", "화", "수", "목", "금", "토", "일"]
@@ -212,28 +203,30 @@ if data is not None:
                     is_sel = st.session_state.selected_stock['종목명'] == row['종목명']
                     if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"{m_name}_{i}"):
                         st.session_state.selected_stock = row.to_dict()
-                        prob, _ = calculate_technical_probability(row['종목코드'], row['시장'])
-                        st.session_state.messages = [{"role": "assistant", "content": get_ai_expert_analysis(row['종목명'], prob)}]
+                        # 종목 변경 시 분석 리포트 즉시 갱신
+                        with st.spinner("전문가 리포트 생성 중..."):
+                            prob, _ = calculate_technical_probability(row['종목코드'], row['시장'])
+                            st.session_state.initial_analysis = get_ai_expert_analysis(row['종목명'], prob)
+                        st.session_state.messages = [] # 대화 내역 초기화
                         st.rerun()
 
+    # --- 중간: 차트 및 데이터 ---
     with col_main:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]}</div>', unsafe_allow_html=True)
         
         chart_col, supply_col = st.columns([7, 3])
+        ticker_symbol = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
+        tk = yf.Ticker(ticker_symbol)
+
         with chart_col:
-            ticker = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
             try:
-                tk = yf.Ticker(ticker)
                 hist_raw = tk.history(period="3mo")
-                # [오류 해결] 종가가 0인 불완전 데이터 필터링하여 깨짐 방지
                 hist = hist_raw[hist_raw['Close'] > 0].tail(40)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], 
                                                      increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 fig.update_layout(template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
-                                  paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
-                                  yaxis=dict(tickformat=",d", tickfont=dict(size=13, color='#ffffff', family="Arial"), gridcolor='rgba(255,255,255,0.07)'),
-                                  xaxis=dict(tickformat="%m.%d", tickfont=dict(size=13, color='#ffffff', family="Arial"), gridcolor='rgba(255,255,255,0.07)'))
+                                  paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
             except: st.error("차트 로드 실패")
 
@@ -250,39 +243,52 @@ if data is not None:
 
         st.markdown(f"""<div class="report-box"><div class="info-line"><span class="highlight-mint">종목:</span> {stock["종목명"]} ({stock['종목코드']}) &nbsp;|&nbsp; <span class="highlight-mint">시장:</span> {stock['시장']} &nbsp;|&nbsp; <span class="highlight-mint">거래대금:</span> {stock.get('최근거래일거래대금(억)', 0):,}억</div></div>""", unsafe_allow_html=True)
 
-        # 재무 차트 상단 배치 유지
         f_col1, f_col2 = st.columns(2)
         try:
             income = tk.financials.loc['Operating Income'].sort_index() / 1e8
             debt = (tk.balance_sheet.loc['Total Debt'] / tk.balance_sheet.loc['Stockholders Equity'] * 100).sort_index()
             with f_col1:
                 st.markdown('<div class="finance-header-box"><span class="finance-label-compact">💰 연간 영업이익 (억)</span></div>', unsafe_allow_html=True)
-                if income is not None: st.plotly_chart(draw_finance_chart(income.index.year, income.values, "억"), use_container_width=True)
+                st.plotly_chart(draw_finance_chart(income.index.year, income.values, "억"), use_container_width=True)
             with f_col2:
                 st.markdown('<div class="finance-header-box"><span class="finance-label-compact">📉 연간 부채비율 (%)</span></div>', unsafe_allow_html=True)
-                if debt is not None: st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
+                st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # [신규] 기술적 지표 백테스팅 확률 박스 하단 배치
+        # 상승 확률 박스
         prob, msg = calculate_technical_probability(stock['종목코드'], stock['시장'])
         st.markdown(f"""
         <div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; margin-bottom:20px; text-align:center;">
             <span style="color:#00e5ff; font-size:1.2rem; font-weight:800; margin-bottom:15px; display:block;">🎯 AI 내일 상승 확률 (기술적 백테스팅)</span>
             <div style="color:#ffffff; font-size:2.8rem; font-weight:900;">{prob}%</div>
-            <div style="color:#8b949e; font-size:0.9rem; margin-top:10px;">과거 1년 RSI, 이격도, 볼린저밴드 등 유사 패턴 대조 결과 ({msg})</div>
+            <div style="color:#8b949e; font-size:0.9rem; margin-top:10px;">RSI, 이격도, 캔들 패턴 대조 완료 ({msg})</div>
         </div>
         """, unsafe_allow_html=True)
 
+    # --- 오른쪽: AI 비서 ---
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
         with st.container(height=700):
+            # 1. 초기 종목 분석 리포트 출력 (사진 1번 형태)
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown(st.session_state.initial_analysis)
+            
+            # 2. 추가 채팅 내용 출력
             for m in st.session_state.messages:
-                with st.chat_message(m["role"]): st.markdown(m["content"])
+                with st.chat_message(m["role"]):
+                    st.markdown(m["content"])
+        
         if prompt := st.chat_input("질문하세요..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"): st.markdown(prompt)
-            with st.chat_message("assistant"):
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": "핵심 위주 요약 보고."}] + st.session_state.messages)
-                full_res = res.choices[0].message.content
-                st.markdown(full_res)
-                st.session_state.messages.append({"role": "assistant", "content": full_res})
+            st.rerun()
+            # (주석: rerun 이후 아래 로직이 실행되어 응답 생성)
+            
+        if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+            with st.chat_message("assistant", avatar="🤖"):
+                full_history = [{"role": "system", "content": "핵심 위주 요약 보고."}] + \
+                               [{"role": "assistant", "content": st.session_state.initial_analysis}] + \
+                               st.session_state.messages
+                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=full_history)
+                ans = res.choices[0].message.content
+                st.markdown(ans)
+                st.session_state.messages.append({"role": "assistant", "content": ans})
