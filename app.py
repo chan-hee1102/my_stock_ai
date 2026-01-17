@@ -11,9 +11,10 @@ from datetime import datetime, timedelta
 import numpy as np
 import re
 
-# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지용 최상단 배치)
+# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지를 위해 최상단 배치)
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
+# [중요] 앱 시작 시 모든 세션 변수를 강제로 생성하여 에러를 원천 차단합니다.
 if "selected_stock" not in st.session_state:
     st.session_state.selected_stock = None
 if "messages" not in st.session_state:
@@ -82,49 +83,49 @@ def load_data():
     return df, latest_file.split('_')[-1].replace('.csv', '')
 
 def get_naver_news_by_date(stock_name):
-    """네이버 뉴스에서 페이지를 넘기며 최근 1~2주간의 데이터를 정밀 수집"""
+    """네이버 뉴스에서 페이지를 넘기며 최근 1~2주간의 실제 뉴스 수집"""
     try:
         limit_date = datetime.now() - timedelta(days=14)
         news_data = []
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        # 더 실제 사용자와 같은 브라우저 헤더를 사용하여 차단을 피합니다.
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         
-        # 페이지 번호(start)를 1, 11, 21... 순으로 넘기며 최대 5페이지까지 확인
         for page in range(5):
             start_param = page * 10 + 1
             url = f"https://search.naver.com/search.naver?where=news&query={stock_name}&sort=1&start={start_param}"
-            res = requests.get(url, headers=headers)
+            res = requests.get(url, headers=headers, timeout=10)
             soup = BeautifulSoup(res.text, 'html.parser')
             items = soup.select('.news_area')
             
             if not items: break
             
             for item in items:
-                title = item.select_one('.news_tit').text
-                link = item.select_one('.news_tit')['href']
-                date_str = item.select_one('.info_group').text
+                title_elem = item.select_one('.news_tit')
+                if not title_elem: continue
+                title = title_elem.text
+                link = title_elem['href']
+                date_elem = item.select_one('.info_group')
+                date_info = date_elem.text if date_elem else ""
                 
                 # 날짜 유효성 체크 로직
                 is_recent = True
-                if '일 전' in date_str:
-                    days_ago = int(re.findall(r'\d+', date_str)[0])
+                if '일 전' in date_info:
+                    days_ago = int(re.findall(r'\d+', date_info)[0])
                     if days_ago > 14: is_recent = False
-                elif '.' in date_str:
+                elif '.' in date_info:
                     try:
-                        extracted_date = datetime.strptime(re.findall(r'\d{4}\.\d{2}\.\d{2}', date_str)[0], '%Y.%m.%d')
-                        if extracted_date < limit_date: is_recent = False
+                        extracted = datetime.strptime(re.search(r'\d{4}\.\d{2}\.\d{2}', date_info).group(), '%Y.%m.%d')
+                        if extracted < limit_date: is_recent = False
                     except: pass
                 
                 if is_recent:
-                    news_data.append(f"기사: {title} | 링크: {link} | 날짜: {date_str.strip()}")
-                else:
-                    # 루프 종료 조건: 기사가 14일보다 오래됨
-                    break
-            
+                    news_data.append(f"제목: {title} | 링크: {link} | 날짜: {date_info.strip()}")
+                else: break
             if not is_recent: break
             
         return "\n".join(news_data) if news_data else "최근 2주간 분석할 만한 기사가 없습니다."
-    except:
-        return "뉴스 데이터를 가져오는 중 오류가 발생했습니다."
+    except Exception as e:
+        return f"뉴스 수집 실패: {str(e)}"
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
@@ -166,48 +167,45 @@ def calculate_technical_probability(code, market):
     except: return 50, "분석 시스템 대기"
 
 def get_ai_analyst_report(stock_name):
-    """국내 주식 단타 전문가 컨셉의 뉴스 선별 리포트 작성"""
+    """단타 전문가 컨셉 리포트 (유저 요청에 따라 확률 수치 절대 언급 금지)"""
     if not client: return "AI 비서 연결 불가."
-    news_context = get_naver_news_by_date(stock_name)
-    
+    news_content = get_naver_news_by_date(stock_name)
     try:
-        prompt = (f"당신은 {stock_name} 종목 전담 국내 주식 단타 전문가이자 증권사 수석 애널리스트입니다.\n"
-                  f"최근 1~2주간의 네이버 뉴스 데이터를 바탕으로 주가 등락의 핵심 원인을 공식 뉴스 위주로 보고하세요.\n\n"
-                  f"데이터:\n{news_context}\n\n"
-                  f"미션 지침:\n"
-                  f"1. 중복, 광고성, 무의미한 지수 나열 뉴스는 철저히 무시하세요.\n"
-                  f"2. 최근 상승의 실질적인 원인이 된 '공식 뉴스'를 선별하여 링크와 함께 요약하세요.\n"
-                  f"3. 악재가 있다면 '내일 매매 위험'에 링크와 함께 적고, 없으면 '위험 요소 없음'으로 명시하세요.\n"
-                  f"4. **절대로 분석 내용에 '상승 확률'이나 숫자로 된 확률 수치(예: 50%)를 직접 언급하지 마세요.**\n"
-                  f"5. 모든 답변은 냉철한 전문가 톤으로 한국어로만 작성하세요.\n\n"
-                  f"### 리포트 구조:\n"
-                  f"1. **최근 상승 이유**:\n2. **내일 매매 위험**:\n\n"
-                  f"마지막엔 '이 종목에 대해 더 궁금한 점이 있으신가요?'라고 물으며 마무리하세요.")
-        
+        prompt = (f"당신은 {stock_name} 종목 전담 증권사 수석 애널리스트이자 단타 전문가입니다.\n"
+                  f"최근 1~2주간의 뉴스를 분석하여 주가 등락의 원인을 공식 뉴스 위주로 보고하세요.\n\n"
+                  f"데이터:\n{news_content}\n\n"
+                  f"지침:\n"
+                  f"1. 광고성, 무의미한 지수 나열 뉴스는 배제하세요.\n"
+                  f"2. 최근 상승의 실질 원인이 된 '공식 뉴스'를 골라 링크와 함께 요약하세요.\n"
+                  f"3. 악재 포착 시 '내일 매매 위험'에 링크와 함께 적고, 없으면 '위험 요소 없음'으로 적으세요.\n"
+                  f"4. **절대로 분석 리포트 본문에 '상승 확률'이나 '50%' 같은 확률 수치를 언급하지 마세요.**\n"
+                  f"5. 모든 내용은 냉철한 전문가 톤으로 한국어로만 작성하세요.\n\n"
+                  f"구조:\n1. **최근 상승 이유**:\n2. **내일 매매 위험**:\n\n"
+                  f"이 종목에 대해 더 궁금한 점이 있는지 질문하며 마무리하세요.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "냉철한 국내 주식 애널리스트."}, {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": "냉철한 주식 전문가 애널리스트."}, {"role": "user", "content": prompt}],
             temperature=0.2
         )
         return res.choices[0].message.content
-    except: return f"{stock_name} 리포트를 생성하는 중입니다."
+    except Exception as e:
+        return f"{stock_name} 분석 로딩 중... ({str(e)})"
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
     color = "#00e5ff" if not is_debt else "#ff3366"
     fig.add_trace(go.Scatter(x=dates, y=values, mode='lines+markers+text', text=[f"{v:,.0f}{unit}" for v in values], textposition="top center", line=dict(color=color, width=3), marker=dict(size=8, color=color)))
-    # [차트 테마 고정] 배경색을 명시적으로 다크(#1c2128) 지정
     fig.update_layout(template="plotly_dark", height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
     return fig
 
-# 4) 메인 로직
+# 4) 메인 실행 로직
 data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 if data is not None:
-    # 세션 상태 강제 초기화 (AttributeError 방지)
+    # [에러 해결] AttributeError 방지를 위해 세션 상태 강제 초기화
     if st.session_state.selected_stock is None:
         st.session_state.selected_stock = data.iloc[0].to_dict()
 
@@ -264,23 +262,21 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # UI 박스는 유지하되 AI 비서 분석 내용에서는 제외
         prob, msg = calculate_technical_probability(stock['종목코드'], stock['시장'])
         st.markdown(f"""<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; display:block; margin-bottom:15px;">🎯 AI 내일 상승 확률 (기술적 백테스팅)</span><div style="color:#ffffff; font-size:2.8rem; font-weight:900;">{prob}%</div><div style="color:#8b949e; font-size:0.9rem;">{msg}</div></div>""", unsafe_allow_html=True)
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        # 자동 분석 리포트 생성 로직
+        # 자동 분석 리포트 생성
         if st.session_state.initial_analysis is None:
             with st.spinner("전문 애널리스트가 최근 2주간의 소식을 정밀 분석 중입니다..."):
                 st.session_state.initial_analysis = get_ai_analyst_report(stock['종목명'])
         
         with st.container(height=700):
-            # [에러 방지] initial_analysis가 생성된 후에만 출력
+            # [에러 방지] initial_analysis가 존재할 때만 마크다운 출력
             if st.session_state.initial_analysis:
                 with st.chat_message("assistant", avatar="🤖"):
                     st.markdown(st.session_state.initial_analysis)
-            
             for m in st.session_state.messages:
                 with st.chat_message(m["role"]): st.markdown(m["content"])
         
