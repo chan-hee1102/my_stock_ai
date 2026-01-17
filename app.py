@@ -11,10 +11,9 @@ from datetime import datetime, timedelta
 import numpy as np
 import re
 
-# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지를 위해 최상단 배치)
+# 1) 페이지 설정 및 세션 초기화 (AttributeError 원천 차단)
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# [중요] 앱 시작 시 모든 세션 변수를 강제로 생성하여 에러를 원천 차단합니다.
 if "selected_stock" not in st.session_state:
     st.session_state.selected_stock = None
 if "messages" not in st.session_state:
@@ -22,7 +21,7 @@ if "messages" not in st.session_state:
 if "initial_analysis" not in st.session_state:
     st.session_state.initial_analysis = None
 
-# 2) 디자인 CSS (찬희님 디자인 100% 유지)
+# 2) 디자인 CSS (찬희님 디자인 유지)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -46,7 +45,8 @@ st.markdown("""
     
     [data-testid="stChatMessage"] {
         background-color: #161b22 !important; border: 1px solid #30363d !important;
-        border-radius: 12px !important; padding: 20px !important; margin-bottom: 10px !important;
+        border-radius: 12px !important; padding: 20px !important;
+        margin-bottom: 10px !important;
     }
     [data-testid="stChatMessage"] * { color: #ffffff !important; opacity: 1 !important; font-size: 1.0rem !important; line-height: 1.6 !important; }
     [data-testid="stChatMessage"] strong { color: #00e5ff !important; font-weight: 800 !important; }
@@ -87,7 +87,6 @@ def get_naver_news_by_date(stock_name):
     try:
         limit_date = datetime.now() - timedelta(days=14)
         news_data = []
-        # 더 실제 사용자와 같은 브라우저 헤더를 사용하여 차단을 피합니다.
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         
         for page in range(5):
@@ -107,7 +106,6 @@ def get_naver_news_by_date(stock_name):
                 date_elem = item.select_one('.info_group')
                 date_info = date_elem.text if date_elem else ""
                 
-                # 날짜 유효성 체크 로직
                 is_recent = True
                 if '일 전' in date_info:
                     days_ago = int(re.findall(r'\d+', date_info)[0])
@@ -118,14 +116,11 @@ def get_naver_news_by_date(stock_name):
                         if extracted < limit_date: is_recent = False
                     except: pass
                 
-                if is_recent:
-                    news_data.append(f"제목: {title} | 링크: {link} | 날짜: {date_info.strip()}")
+                if is_recent: news_data.append(f"제목: {title} | 링크: {link}")
                 else: break
             if not is_recent: break
-            
         return "\n".join(news_data) if news_data else "최근 2주간 분석할 만한 기사가 없습니다."
-    except Exception as e:
-        return f"뉴스 수집 실패: {str(e)}"
+    except Exception: return "뉴스 수집 실패"
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
@@ -154,8 +149,7 @@ def calculate_technical_probability(code, market):
         df['MA20'] = close.rolling(20).mean()
         df['Disparity'] = (close / df['MA20']) * 100
         delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        gain, loss = (delta.where(delta > 0, 0)).rolling(14).mean(), (-delta.where(delta < 0, 0)).rolling(14).mean()
         df['RSI'] = 100 - (100 / (1 + (gain / loss)))
         curr = df.iloc[-1]
         df['Next_Day_Up'] = (df['Close'].shift(-1) > df['Close']).astype(int)
@@ -167,36 +161,33 @@ def calculate_technical_probability(code, market):
     except: return 50, "분석 시스템 대기"
 
 def get_ai_analyst_report(stock_name):
-    """단타 전문가 컨셉 리포트 (유저 요청에 따라 확률 수치 절대 언급 금지)"""
+    """단타 전문가 컨셉 리포트 (중국어/일본어 절대 금지 및 한국어 전용)"""
     if not client: return "AI 비서 연결 불가."
     news_content = get_naver_news_by_date(stock_name)
     try:
-        prompt = (f"당신은 {stock_name} 종목 전담 증권사 수석 애널리스트이자 단타 전문가입니다.\n"
-                  f"최근 1~2주간의 뉴스를 분석하여 주가 등락의 원인을 공식 뉴스 위주로 보고하세요.\n\n"
-                  f"데이터:\n{news_content}\n\n"
-                  f"지침:\n"
-                  f"1. 광고성, 무의미한 지수 나열 뉴스는 배제하세요.\n"
-                  f"2. 최근 상승의 실질 원인이 된 '공식 뉴스'를 골라 링크와 함께 요약하세요.\n"
-                  f"3. 악재 포착 시 '내일 매매 위험'에 링크와 함께 적고, 없으면 '위험 요소 없음'으로 적으세요.\n"
-                  f"4. **절대로 분석 리포트 본문에 '상승 확률'이나 '50%' 같은 확률 수치를 언급하지 마세요.**\n"
-                  f"5. 모든 내용은 냉철한 전문가 톤으로 한국어로만 작성하세요.\n\n"
-                  f"구조:\n1. **최근 상승 이유**:\n2. **내일 매매 위험**:\n\n"
-                  f"이 종목에 대해 더 궁금한 점이 있는지 질문하며 마무리하세요.")
+        # [중요] 외국어 사용 금지를 시스템 메시지에 더 강력히 고정
+        prompt = (f"당신은 {stock_name} 전담 증권사 수석 애널리스트이자 단타 전문가입니다.\n"
+                  f"반드시 한국어로만 답변하고, 중국어나 일본어는 절대 사용하지 마세요.\n\n"
+                  f"최근 1~2주 뉴스 데이터:\n{news_content}\n\n"
+                  f"지침:\n1. 광고/중복 뉴스는 무시하고 주가 등락 원인이 된 '공식 뉴스'만 선별하여 링크와 함께 요약하세요.\n"
+                  f"2. 악재 포착 시 '내일 매매 위험'에 링크와 함께 적고, 없으면 '위험 요소 없음'으로 명시하세요.\n"
+                  f"3. 리포트 본문에 상승 확률(%)이나 수치는 절대 언급하지 마세요.\n\n"
+                  f"### 리포트 구조:\n1. **최근 상승 이유**:\n2. **내일 매매 위험**:\n\n"
+                  f"마지막에 궁금한 점을 질문하며 마무리하세요.")
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "냉철한 주식 전문가 애널리스트."}, {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": "한국어 전용 국내 주식 분석 전문가. 중국어/일본어 사용 시 해고됨."}, {"role": "user", "content": prompt}],
             temperature=0.2
         )
         return res.choices[0].message.content
-    except Exception as e:
-        return f"{stock_name} 분석 로딩 중... ({str(e)})"
+    except Exception: return f"{stock_name} 분석 로딩 중..."
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
     color = "#00e5ff" if not is_debt else "#ff3366"
     fig.add_trace(go.Scatter(x=dates, y=values, mode='lines+markers+text', text=[f"{v:,.0f}{unit}" for v in values], textposition="top center", line=dict(color=color, width=3), marker=dict(size=8, color=color)))
-    fig.update_layout(template="plotly_dark", height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
+    fig.update_layout(template="plotly_dark", height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)"))
     return fig
 
 # 4) 메인 실행 로직
@@ -205,7 +196,6 @@ groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 if data is not None:
-    # [에러 해결] AttributeError 방지를 위해 세션 상태 강제 초기화
     if st.session_state.selected_stock is None:
         st.session_state.selected_stock = data.iloc[0].to_dict()
 
@@ -236,7 +226,22 @@ if data is not None:
             try:
                 hist = tk.history(period="3mo").tail(40)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
-                fig.update_layout(template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
+                # [차트 가독성 대폭 개선] 풀 넘버 표시, 숫자 날짜, 흐릿한 그리드
+                fig.update_layout(
+                    template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
+                    paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
+                    yaxis=dict(
+                        tickformat=',d', # 가격 풀 넘버 표시 (k 제거)
+                        gridcolor='rgba(255,255,255,0.05)', # 그리드 투명도 증가 (흐릿하게)
+                        tickfont=dict(size=13, color='#ffffff', family="Arial"), # 글씨 더 잘 보이게
+                        side="left"
+                    ),
+                    xaxis=dict(
+                        tickformat='%m.%d', # 날짜 숫자 형식 (01.17)
+                        gridcolor='rgba(255,255,255,0.05)', 
+                        tickfont=dict(size=13, color='#ffffff', family="Arial")
+                    )
+                )
                 st.plotly_chart(fig, use_container_width=True)
             except: st.error("차트 로드 실패")
         with c2:
@@ -267,13 +272,11 @@ if data is not None:
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        # 자동 분석 리포트 생성
         if st.session_state.initial_analysis is None:
             with st.spinner("전문 애널리스트가 최근 2주간의 소식을 정밀 분석 중입니다..."):
                 st.session_state.initial_analysis = get_ai_analyst_report(stock['종목명'])
         
         with st.container(height=700):
-            # [에러 방지] initial_analysis가 존재할 때만 마크다운 출력
             if st.session_state.initial_analysis:
                 with st.chat_message("assistant", avatar="🤖"):
                     st.markdown(st.session_state.initial_analysis)
@@ -284,7 +287,11 @@ if data is not None:
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             with st.chat_message("assistant", avatar="🤖"):
-                res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
+                # 추가 답변도 한국어로 고정
+                res = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile", 
+                    messages=[{"role": "system", "content": "한국어 주식 전문가. 타국어 금지."}, {"role": "user", "content": prompt}]
+                )
                 ans = res.choices[0].message.content
                 st.markdown(ans)
                 st.session_state.messages.append({"role": "assistant", "content": ans})
