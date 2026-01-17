@@ -20,7 +20,7 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# [요구사항 5 반영] 페이지를 켜는 순간의 실제 오늘 날짜 (실시간 정보 반영의 기초)
+# [요구사항 5] 페이지 접속 시점의 실제 오늘 날짜 (2026-01-18)
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
 # 2) 디자인 CSS (찬희님 디자인 100% 유지)
@@ -123,38 +123,28 @@ def calculate_ai_probability(df):
     try:
         if not os.path.exists("stock_model.pkl"):
             return 50, "학습 모델(.pkl) 없음", []
-        
         model = joblib.load("stock_model.pkl")
-        
         df['rsi'] = ta.rsi(df['Close'], length=14)
         bb = ta.bbands(df['Close'], length=20, std=2)
         if bb is not None:
             l_col = [c for c in bb.columns if 'BBL' in c][0]
             u_col = [c for c in bb.columns if 'BBU' in c][0]
             df['bb_per'] = (df['Close'] - bb[l_col]) / (bb[u_col] - bb[l_col])
-        
         ma5, ma20 = ta.sma(df['Close'], length=5), ta.sma(df['Close'], length=20)
         df['ma_diff'] = (ma5 - ma20) / ma20
         df['vol_ratio'] = df['Volume'] / df['Volume'].shift(1)
-        
         last = df.iloc[-1]
         last_features = df[['rsi', 'bb_per', 'ma_diff', 'vol_ratio']].tail(1)
-        
-        if last_features.isnull().values.any():
-            return 50, "분석 데이터 준비 중", []
-            
+        if last_features.isnull().values.any(): return 50, "분석 데이터 준비 중", []
         prob = model.predict_proba(last_features)[0][1] * 100
-        
         reasons = [
             {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
             {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중심권"},
             {"label": "이평 에너지 (MA Diff)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "정배열" if last['ma_diff'] > 0 else "역배열"},
             {"label": "수급 모멘텀 (Vol Ratio)", "val": f"{round(float(last['vol_ratio']), 1)}배", "desc": "수급폭발" if last['vol_ratio'] > 2 else "유입중"}
         ]
-        
         return round(prob, 1), "타겟 모델 최적화 완료", reasons
-    except Exception as e:
-        return 50, f"분석 대기 ({str(e)})", []
+    except Exception as e: return 50, f"분석 대기 ({str(e)})", []
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -193,7 +183,6 @@ if data is not None:
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]}</div>', unsafe_allow_html=True)
         ticker_sym = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
         tk = yf.Ticker(ticker_sym)
-        
         c1, c2 = st.columns([7, 3])
         with c1:
             try:
@@ -231,10 +220,8 @@ if data is not None:
         except: pass
 
         prob, msg, reasons = calculate_ai_probability(hist)
-        
         st.markdown('<div class="section-header" style="margin-top:30px;">🚀 AI PREDICTIVE STRATEGY: 5개년 데이터 모델링 기반 익일 기대수익 확률</div>', unsafe_allow_html=True)
         prob_col, reason_col = st.columns([4, 6])
-        
         with prob_col:
             st.markdown(f"""
                 <div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; height:280px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
@@ -243,15 +230,11 @@ if data is not None:
                     <div style="color:#8b949e; font-size:0.8rem; margin-top:10px;">{msg}</div>
                 </div>
             """, unsafe_allow_html=True)
-            
         with reason_col:
             for r in reasons:
                 st.markdown(f"""
                     <div class="reason-badge">
-                        <div>
-                            <div class="reason-label">{r['label']}</div>
-                            <div class="reason-value">{r['val']}</div>
-                        </div>
+                        <div><div class="reason-label">{r['label']}</div><div class="reason-value">{r['val']}</div></div>
                         <div class="reason-desc">{r['desc']}</div>
                     </div>
                 """, unsafe_allow_html=True)
@@ -262,22 +245,22 @@ if data is not None:
         
         with chat_container:
             if not st.session_state.messages and client:
-                with st.spinner("전문 애널리스트가 실시간 뉴스를 분석 중입니다..."):
-                    # [요구사항 1, 3, 4, 5 반영] 형광색 강조, 줄바꿈 최적화, 전문 테마 분석 지침
+                with st.spinner("전문 애널리스트가 실시간 시장을 분석 중입니다..."):
+                    # [변경] 요구사항 1~5 통합 반영: 민트색 강조, 줄바꿈, 실시간 전문 분석
                     auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_date} 기준으로 {stock['종목명']}을 분석해줘.
                     
-                    반드시 아래의 형식을 '정확히' 지켜서 답변해 (헤더 태그 포함):
-                    <span style="color:#00e5ff; font-weight:800;">테마:</span>
+                    반드시 아래의 형식을 '정확히' 지켜서 답변해 (HTML 태그 포함):
+                    <span style='color:#00e5ff; font-weight:800;'>테마:</span>
                     
-                    (해당 종목이 현재 시장에서 가장 주목받는 구체적인 테마를 한두 줄로 요약. 예: '피지컬 AI 및 휴머노이드 로봇 핵심 부품 테마' 등)
+                    (해당 종목이 현재 시장에서 가장 주목받는 '실시간 테마'를 애널리스트처럼 분석해서 한두 줄로 작성해줘. 예: '피지컬 AI 및 휴머노이드 로봇 핵심 부품 테마' 등)
                     
-                    <span style="color:#00e5ff; font-weight:800;">최근 상승한 이유:</span>
+                    <span style='color:#00e5ff; font-weight:800;'>최근 상승한 이유:</span>
                     
-                    (최근 뉴스를 기반으로 상승 동력을 분석하여 상세히 작성하되, 가독성을 위해 불필요한 미사여구는 빼고 엔터를 적절히 섞어줘)
+                    (오늘 날짜 실시간 뉴스 기반으로 상승 동력을 분석하여 한 줄 띄우고 상세히 작성하되, 불필요한 미사여구는 빼고 가독성 좋게 엔터를 섞어줘)
                     
-                    <span style="color:#00e5ff; font-weight:800;">악재 및 내일 전망:</span>
+                    <span style='color:#00e5ff; font-weight:800;'>악재 및 내일 전망:</span>
                     
-                    (리스크 변수나 내일 장 기준의 전망을 분석하여 작성. 악재가 전혀 없다면 내일의 기술적 대응 전략을 전문가처럼 써줘)
+                    (뉴스 기준 리스크 변수나 내일 장 전망을 분석하여 한 줄 띄우고 작성. 악재가 없으면 내일의 기술적 대응 전략을 전문가처럼 써줘)
                     
                     마지막엔 "{stock['종목명']}에 대해 궁금한 점 있으시면 질문해주세요."라고 마무리해."""
                     
@@ -287,9 +270,10 @@ if data is not None:
                             {"role": "system", "content": f"""당신은 대한민국 최고의 주식 투자 전문가입니다. 
                             [절대 규칙] 
                             1. 반드시 한국어로만 답변하십시오. 
-                            2. 한자(Hanja), 일본어, 중국어 사용을 '절대' 금지합니다. (예: 要인 -> 요인, 汽車 -> 자동차, 影響 -> 영향) 
-                            3. 모든 답변은 한글과 숫자, 필수적인 영문(AI, EV 등)으로만 구성하십시오. 한자가 하나라도 섞이면 답변 실패입니다.
-                            4. 가독성을 위해 각 항목 헤더(<span...>) 뒤에는 반드시 엔터(줄바꿈)를 두 번 입력하고 본문을 시작하십시오."""},
+                            2. 한자(Hanja), 일본어, 중국어 사용을 '절대' 금지합니다. (汽車 -> 자동차, 影響 -> 영향) 
+                            3. 'several', 'recently', 'factors' 같은 불필요한 영어 단어를 절대 섞지 마십시오. 오직 한국어만 사용합니다. (AI, EV 등 전문 용어만 허용)
+                            4. 각 항목 헤더(<span...>) 뒤에는 반드시 엔터(줄바꿈)를 두 번 입력하십시오.
+                            5. 현재 날짜 {today_real_date}를 기준으로 실시간 뉴스 정보를 반영하십시오."""},
                             {"role": "user", "content": auto_prompt}
                         ]
                     )
@@ -308,7 +292,7 @@ if data is not None:
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한글로만 답변하세요. 한자 사용은 절대 금지합니다."},
+                            {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한국어만 사용하여 답변하세요. 한자/일본어/영어 수식어는 절대 금지합니다."},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
