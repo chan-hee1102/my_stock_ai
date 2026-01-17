@@ -11,10 +11,9 @@ from datetime import datetime, timedelta
 import numpy as np
 import re
 
-# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지를 위해 최상단 배치)
+# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지용 최상단 배치)
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
-# 세션 상태 초기화 (앱 실행 즉시 변수 생성)
 if "selected_stock" not in st.session_state:
     st.session_state.selected_stock = None
 if "messages" not in st.session_state:
@@ -83,16 +82,16 @@ def load_data():
     return df, latest_file.split('_')[-1].replace('.csv', '')
 
 def get_naver_news_by_date(stock_name):
-    """네이버 뉴스에서 페이지를 넘기며(Pagination) 최근 2주간의 공식 뉴스 수집"""
+    """네이버 뉴스에서 페이지를 넘기며 최근 1~2주간의 데이터를 정밀 수집"""
     try:
         limit_date = datetime.now() - timedelta(days=14)
         news_data = []
         headers = {'User-Agent': 'Mozilla/5.0'}
         
-        # 1페이지(start=1)부터 5페이지(start=41)까지 탐색
+        # 페이지 번호(start)를 1, 11, 21... 순으로 넘기며 최대 5페이지까지 확인
         for page in range(5):
-            start_idx = page * 10 + 1
-            url = f"https://search.naver.com/search.naver?where=news&query={stock_name}&sort=1&start={start_idx}"
+            start_param = page * 10 + 1
+            url = f"https://search.naver.com/search.naver?where=news&query={stock_name}&sort=1&start={start_param}"
             res = requests.get(url, headers=headers)
             soup = BeautifulSoup(res.text, 'html.parser')
             items = soup.select('.news_area')
@@ -102,30 +101,30 @@ def get_naver_news_by_date(stock_name):
             for item in items:
                 title = item.select_one('.news_tit').text
                 link = item.select_one('.news_tit')['href']
-                date_text = item.select_one('.info_group').text
+                date_str = item.select_one('.info_group').text
                 
-                # 날짜 판단 로직
+                # 날짜 유효성 체크 로직
                 is_recent = True
-                if '일 전' in date_text:
-                    days_ago = int(re.findall(r'\d+', date_text)[0])
+                if '일 전' in date_str:
+                    days_ago = int(re.findall(r'\d+', date_str)[0])
                     if days_ago > 14: is_recent = False
-                elif '.' in date_text:
+                elif '.' in date_str:
                     try:
-                        match = re.search(r'\d{4}\.\d{2}\.\d{2}', date_text)
-                        if match:
-                            article_date = datetime.strptime(match.group(), '%Y.%m.%d')
-                            if article_date < limit_date: is_recent = False
+                        extracted_date = datetime.strptime(re.findall(r'\d{4}\.\d{2}\.\d{2}', date_str)[0], '%Y.%m.%d')
+                        if extracted_date < limit_date: is_recent = False
                     except: pass
                 
-                if not is_recent: continue
-                news_data.append(f"제목: {title} | 링크: {link} | 날짜: {date_text.strip()}")
+                if is_recent:
+                    news_data.append(f"기사: {title} | 링크: {link} | 날짜: {date_str.strip()}")
+                else:
+                    # 루프 종료 조건: 기사가 14일보다 오래됨
+                    break
             
-            # 수집된 마지막 기사가 14일 이전이면 루프 종료
             if not is_recent: break
             
-        return "\n".join(news_data) if news_data else "최근 2주간 관련 뉴스가 없습니다."
+        return "\n".join(news_data) if news_data else "최근 2주간 분석할 만한 기사가 없습니다."
     except:
-        return "뉴스 데이터 수집 중 일시적인 오류가 발생했습니다."
+        return "뉴스 데이터를 가져오는 중 오류가 발생했습니다."
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
@@ -166,41 +165,43 @@ def calculate_technical_probability(code, market):
         return 53, "추세 기반 기본 분석"
     except: return 50, "분석 시스템 대기"
 
-def get_ai_analyst_report(stock_name, ticker_symbol):
-    """국내 주식 전문가 시선에서 2주간 뉴스 선별 및 리포트 작성"""
+def get_ai_analyst_report(stock_name):
+    """국내 주식 단타 전문가 컨셉의 뉴스 선별 리포트 작성"""
     if not client: return "AI 비서 연결 불가."
     news_context = get_naver_news_by_date(stock_name)
     
     try:
         prompt = (f"당신은 {stock_name} 종목 전담 국내 주식 단타 전문가이자 증권사 수석 애널리스트입니다.\n"
-                  f"제공된 최근 2주간의 뉴스 데이터를 분석하여 투자 전략을 보고하세요.\n\n"
-                  f"뉴스 데이터:\n{news_context}\n\n"
-                  f"전략 가이드:\n"
-                  f"1. 광고, 중복 뉴스, 무의미한 지표 나열 뉴스는 철저히 무시하세요.\n"
-                  f"2. 최근 상승의 실질적인 원인이 된 '공식 뉴스'를 1~3개 골라 요약하고 링크를 반드시 포함하세요.\n"
-                  f"3. 악재가 포착된다면 '내일 매매 위험'에 링크와 함께 적고, 없으면 '위험 요소 없음'으로 명시하세요.\n"
-                  f"4. **절대로 분석 내용에 '상승 확률'이나 숫자로 된 확률 수치를 언급하지 마세요.**\n"
-                  f"5. 답변은 한국어로만 냉철하고 가독성 좋게 작성하세요.\n\n"
-                  f"구조:\n1. **최근 상승 이유**:\n2. **내일 매매 위험**:\n\n"
-                  f"마지막에는 '이 종목에 대해 더 궁금한 점이 있으신가요?'라고 물으며 끝내세요.")
+                  f"최근 1~2주간의 네이버 뉴스 데이터를 바탕으로 주가 등락의 핵심 원인을 공식 뉴스 위주로 보고하세요.\n\n"
+                  f"데이터:\n{news_context}\n\n"
+                  f"미션 지침:\n"
+                  f"1. 중복, 광고성, 무의미한 지수 나열 뉴스는 철저히 무시하세요.\n"
+                  f"2. 최근 상승의 실질적인 원인이 된 '공식 뉴스'를 선별하여 링크와 함께 요약하세요.\n"
+                  f"3. 악재가 있다면 '내일 매매 위험'에 링크와 함께 적고, 없으면 '위험 요소 없음'으로 명시하세요.\n"
+                  f"4. **절대로 분석 내용에 '상승 확률'이나 숫자로 된 확률 수치(예: 50%)를 직접 언급하지 마세요.**\n"
+                  f"5. 모든 답변은 냉철한 전문가 톤으로 한국어로만 작성하세요.\n\n"
+                  f"### 리포트 구조:\n"
+                  f"1. **최근 상승 이유**:\n2. **내일 매매 위험**:\n\n"
+                  f"마지막엔 '이 종목에 대해 더 궁금한 점이 있으신가요?'라고 물으며 마무리하세요.")
         
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": "냉철한 국내 주식 애널리스트 전문가."}, {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": "냉철한 국내 주식 애널리스트."}, {"role": "user", "content": prompt}],
             temperature=0.2
         )
         return res.choices[0].message.content
-    except: return f"{stock_name} 최신 소식을 가져오는 중입니다."
+    except: return f"{stock_name} 리포트를 생성하는 중입니다."
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
     color = "#00e5ff" if not is_debt else "#ff3366"
     fig.add_trace(go.Scatter(x=dates, y=values, mode='lines+markers+text', text=[f"{v:,.0f}{unit}" for v in values], textposition="top center", line=dict(color=color, width=3), marker=dict(size=8, color=color)))
+    # [차트 테마 고정] 배경색을 명시적으로 다크(#1c2128) 지정
     fig.update_layout(template="plotly_dark", height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)"))
     return fig
 
-# 4) 메인 실행 로직
+# 4) 메인 로직
 data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
@@ -263,17 +264,16 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # UI에서 하단 확률 박스는 유지하되 AI 비서 내용에서는 제외
+        # UI 박스는 유지하되 AI 비서 분석 내용에서는 제외
         prob, msg = calculate_technical_probability(stock['종목코드'], stock['시장'])
         st.markdown(f"""<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; display:block; margin-bottom:15px;">🎯 AI 내일 상승 확률 (기술적 백테스팅)</span><div style="color:#ffffff; font-size:2.8rem; font-weight:900;">{prob}%</div><div style="color:#8b949e; font-size:0.9rem;">{msg}</div></div>""", unsafe_allow_html=True)
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        
-        # 분석 리포트 자동 생성 로직
+        # 자동 분석 리포트 생성 로직
         if st.session_state.initial_analysis is None:
-            with st.spinner("전문 애널리스트가 최근 2주간의 소식을 정밀 조사 중입니다..."):
-                st.session_state.initial_analysis = get_ai_analyst_report(stock['종목명'], ticker_sym)
+            with st.spinner("전문 애널리스트가 최근 2주간의 소식을 정밀 분석 중입니다..."):
+                st.session_state.initial_analysis = get_ai_analyst_report(stock['종목명'])
         
         with st.container(height=700):
             # [에러 방지] initial_analysis가 생성된 후에만 출력
