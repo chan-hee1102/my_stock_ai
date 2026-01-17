@@ -18,7 +18,7 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 2) 디자인 CSS (찬희님 제공 최종 디자인 100% 유지)
+# 2) 디자인 CSS (찬희님 디자인 100% 고정)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; }
@@ -42,11 +42,9 @@ st.markdown("""
     
     [data-testid="stChatMessage"] {
         background-color: #161b22 !important; border: 1px solid #30363d !important;
-        border-radius: 12px !important; padding: 20px !important;
-        margin-bottom: 10px !important;
+        border-radius: 12px !important; padding: 20px !important; margin-bottom: 10px !important;
     }
     [data-testid="stChatMessage"] * { color: #ffffff !important; opacity: 1 !important; font-size: 1.0rem !important; line-height: 1.6 !important; }
-    [data-testid="stChatMessage"] strong { color: #00e5ff !important; font-weight: 800 !important; }
 
     .investor-table { width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff; }
     .investor-table th { background-color: #0d1117; color: #8b949e; padding: 8px; border-bottom: 1px solid #30363d; }
@@ -60,11 +58,13 @@ st.markdown("""
     
     .finance-header-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 15px; margin-bottom: 5px; width: 100%; display: flex; align-items: center; }
     .finance-label-compact { color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }
-    div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; }
+    
+    /* 채팅 입력칸 영역 최하단 고정 */
+    div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; padding-bottom: 0px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 모든 기능 함수 복구
+# 3) 기능 함수 정의
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -72,12 +72,14 @@ def load_data():
     if not files: return None, None
     latest_file = sorted(files)[-1]
     df = pd.read_csv(os.path.join(out_dir, latest_file))
+    # 파일명에서 날짜 추출 (예: 20260116)
+    data_date_raw = latest_file.split('_')[-1].replace('.csv', '')
     if "시장" in df.columns:
         df["시장"] = df["시장"].astype(str).str.strip()
         df.loc[df["시장"].str.contains("유가|KOSPI", na=False), "시장"] = "KOSPI"
         df.loc[df["시장"].str.contains("코스닥|KOSDAQ", na=False), "시장"] = "KOSDAQ"
     if "종목코드" in df.columns: df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
-    return df, latest_file.split('_')[-1].replace('.csv', '')
+    return df, data_date_raw
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
@@ -97,7 +99,6 @@ def get_investor_trend(code):
     except: return None
 
 def calculate_technical_probability(code, market):
-    """백테스팅 엔진 기능 유지"""
     try:
         ticker = code + (".KS" if market == "KOSPI" else ".KQ")
         df = yf.download(ticker, period="1y", interval="1d", progress=False)
@@ -119,7 +120,6 @@ def calculate_technical_probability(code, market):
     except: return 50, "분석 시스템 대기"
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
-    """재무 차트 기능 유지"""
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
     color = "#00e5ff" if not is_debt else "#ff3366"
@@ -128,9 +128,12 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
     return fig
 
 # 4) 메인 로직 실행
-data, data_date = load_data()
+data, data_date_str = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
+
+# 포착 리스트 날짜 가독성 (예: 2026-01-16)
+formatted_date = f"{data_date_str[:4]}-{data_date_str[4:6]}-{data_date_str[6:]}"
 
 if data is not None:
     if st.session_state.selected_stock is None:
@@ -138,9 +141,8 @@ if data is not None:
 
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
-    # --- 왼쪽: 포착 리스트 ---
     with col_list:
-        st.markdown(f'<div class="section-header">📂 {data_date} 포착 리스트</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">📂 {formatted_date} 포착 리스트</div>', unsafe_allow_html=True)
         with st.container(height=800):
             for m_name in ["KOSPI", "KOSDAQ"]:
                 m_df = data[data["시장"] == m_name]
@@ -152,7 +154,6 @@ if data is not None:
                         st.session_state.messages = []
                         st.rerun()
 
-    # --- 중간: 차트 및 지표 ---
     with col_main:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]}</div>', unsafe_allow_html=True)
@@ -164,12 +165,12 @@ if data is not None:
             try:
                 hist = tk.history(period="3mo").tail(40)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
-                # [차트 가독성 고정]
+                # [차트 개선] 풀 넘버, 숫자 날짜, 그리드 투명도 최적화
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
-                    yaxis=dict(tickformat=',d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=13, color='#ffffff', family="Arial"), side="left"),
-                    xaxis=dict(tickformat='%m.%d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=13, color='#ffffff', family="Arial"))
+                    yaxis=dict(tickformat=',d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=13, color='#ffffff')),
+                    xaxis=dict(tickformat='%m.%d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=13, color='#ffffff'))
                 )
                 st.plotly_chart(fig, use_container_width=True)
             except: st.error("차트 로드 실패")
@@ -199,31 +200,30 @@ if data is not None:
         prob, msg = calculate_technical_probability(stock['종목코드'], stock['시장'])
         st.markdown(f"""<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; display:block; margin-bottom:15px;">🎯 AI 내일 상승 확률 (기술적 백테스팅)</span><div style="color:#ffffff; font-size:2.8rem; font-weight:900;">{prob}%</div><div style="color:#8b949e; font-size:0.9rem;">{msg}</div></div>""", unsafe_allow_html=True)
 
-    # --- 오른쪽: AI 비서 ---
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        chat_box = st.container(height=700) # 레이아웃 고정 컨테이너
+        # 채팅창 여백 최소화 레이아웃
+        chat_container = st.container(height=750) 
         
-        with chat_box:
-            # 첫 인사말
+        with chat_container:
             with st.chat_message("assistant", avatar="🤖"):
-                st.write(f"**{stock['종목명']}** 종목에 대해 궁금한 점이 있으신가요?")
+                st.write(f"오늘 날짜는 **{formatted_date}**입니다. **{stock['종목명']}** 종목에 대해 궁금한 점이 있으신가요?")
             
-            # 대화 내역
             for m in st.session_state.messages:
                 with st.chat_message(m["role"], avatar="🤖" if m["role"] == "assistant" else None):
                     st.markdown(m["content"])
         
+        # 입력창 위치 고정
         if prompt := st.chat_input("질문하세요..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with chat_box:
+            with chat_container:
                 with st.chat_message("user"): st.markdown(prompt)
                 with st.chat_message("assistant", avatar="🤖"):
-                    # 전문가 페르소나 적용 (한국어 전용, 타국어 금지)
+                    # [중요] 한국어 전용 지침 및 날짜 정보 LLM 주입
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": "당신은 대한민국 최고의 주식 단타 전문가이자 증권사 수석 애널리스트입니다. 냉철하게 분석하고 한국어로만 답변하며 중국어/일본어는 절대 사용하지 마세요."},
+                            {"role": "system", "content": f"당신은 한국 최고의 주식 단타 전문가이자 증권사 수석 애널리스트입니다. 현재 날짜는 {formatted_date}이며, 모든 대화는 반드시 한국어로만 답변하십시오. 중국어나 일본어, 한자는 절대 사용하지 마십시오."},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
