@@ -20,10 +20,10 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 실제 시스템 오늘 날짜 (기본값)
-today_real_date = datetime.now().strftime('%Y-%m-%d')
+# [변경] AI 비서용 실제 시스템 오늘 날짜 (포착 날짜와 별개로 사용)
+current_real_time = datetime.now().strftime('%Y-%m-%d')
 
-# 2) 디자인 CSS (찬희님 디자인 유지 및 분석 근거 레이아웃만 추가)
+# 2) 디자인 CSS (찬희님 디자인 유지)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #05070a; }}
@@ -64,7 +64,6 @@ st.markdown(f"""
     .finance-header-box {{ background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 15px; margin-bottom: 5px; width: 100%; display: flex; align-items: center; }}
     .finance-label-compact {{ color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }}
     
-    /* 분석 근거 배지 스타일 추가 */
     .reason-badge {{
         background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px;
         padding: 10px 15px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
@@ -92,7 +91,6 @@ def load_data():
     if not files: return None, None
     latest_file = sorted(files)[-1]
     
-    # [변경] 노란 동그라미 해결: 파일명에서 실제 날짜 추출
     date_str = latest_file.split("_")[-1].replace(".csv", "")
     formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
     
@@ -121,42 +119,31 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list)
     except: return None
 
-# [업그레이드] AI 모델 예측 및 근거 생성 함수
 def calculate_ai_probability(df):
     try:
         if not os.path.exists("stock_model.pkl"):
             return 50, "학습 모델(.pkl) 없음", []
-        
         model = joblib.load("stock_model.pkl")
-        
-        # 지표 계산
         df['rsi'] = ta.rsi(df['Close'], length=14)
         bb = ta.bbands(df['Close'], length=20, std=2)
         if bb is not None:
             l_col = [c for c in bb.columns if 'BBL' in c][0]
             u_col = [c for c in bb.columns if 'BBU' in c][0]
             df['bb_per'] = (df['Close'] - bb[l_col]) / (bb[u_col] - bb[l_col])
-        
         ma5, ma20 = ta.sma(df['Close'], length=5), ta.sma(df['Close'], length=20)
         df['ma_diff'] = (ma5 - ma20) / ma20
         df['vol_ratio'] = df['Volume'] / df['Volume'].shift(1)
-        
         last = df.iloc[-1]
         last_features = df[['rsi', 'bb_per', 'ma_diff', 'vol_ratio']].tail(1)
-        
         if last_features.isnull().values.any():
             return 50, "분석 데이터 준비 중", []
-            
         prob = model.predict_proba(last_features)[0][1] * 100
-        
-        # [변경] 빨간 동그라미 해결: 분석 근거 데이터 생성
         reasons = [
-            {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "바닥권" if last['rsi'] < 35 else "과열" if last['rsi'] > 65 else "안정"},
-            {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지선" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "안정"},
-            {"label": "이평 이격 (MA)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "정배열" if last['ma_diff'] > 0 else "역배열"},
+            {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열권" if last['rsi'] > 65 else "안정"},
+            {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "안정"},
+            {"label": "이평 이격 (MA)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "상향추세" if last['ma_diff'] > 0 else "하향추세"},
             {"label": "수급 변화 (VOL)", "val": f"{round(float(last['vol_ratio']), 1)}배", "desc": "거래폭발" if last['vol_ratio'] > 2 else "유입중"}
         ]
-        
         return round(prob, 1), "타겟 종목 특화 분석 완료", reasons
     except Exception as e:
         return 50, f"분석 대기 ({str(e)})", []
@@ -170,7 +157,7 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
     return fig
 
 # 4) 메인 로직 실행
-data, data_date = load_data() # [변경] 파일 날짜 변수 추가
+data, data_date = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
 
@@ -181,7 +168,6 @@ if data is not None:
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
     with col_list:
-        # [변경] 노란 동그라미 해결: 파일 날짜로 제목 변경
         st.markdown(f'<div class="section-header">📂 {data_date} 포착 리스트</div>', unsafe_allow_html=True)
         with st.container(height=800):
             for m_name in ["KOSPI", "KOSDAQ"]:
@@ -231,13 +217,11 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # 🎯 [변경 핵심] 빨간 동그라미 해결: 확률과 분석 근거 병렬 배치
+        # [변경] 빨간 동그라미 해결: 명칭 수정 및 근거 배치
         prob, msg, reasons = calculate_ai_probability(hist)
-        
-        st.markdown('<div class="section-header" style="margin-top:30px;">🎯 AI 정밀 분석 리포트</div>', unsafe_allow_html=True)
-        prob_col, reason_col = st.columns([4, 6])
-        
-        with prob_col:
+        st.markdown('<div class="section-header" style="margin-top:30px;">🎯 AI 5년치 백테스팅 결과 다음날 상승 확률</div>', unsafe_allow_html=True)
+        p_col, r_col = st.columns([4, 6])
+        with p_col:
             st.markdown(f"""
                 <div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; height:280px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
                     <span style="color:#00e5ff; font-size:1.1rem; font-weight:800; margin-bottom:10px;">상승 확률</span>
@@ -245,15 +229,11 @@ if data is not None:
                     <div style="color:#8b949e; font-size:0.8rem; margin-top:10px;">{msg}</div>
                 </div>
             """, unsafe_allow_html=True)
-            
-        with reason_col:
+        with r_col:
             for r in reasons:
                 st.markdown(f"""
                     <div class="reason-badge">
-                        <div>
-                            <div class="reason-label">{r['label']}</div>
-                            <div class="reason-value">{r['val']}</div>
-                        </div>
+                        <div><div class="reason-label">{r['label']}</div><div class="reason-value">{r['val']}</div></div>
                         <div class="reason-desc">{r['desc']}</div>
                     </div>
                 """, unsafe_allow_html=True)
@@ -261,15 +241,13 @@ if data is not None:
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
         chat_container = st.container(height=800) 
-        
         with chat_container:
             with st.chat_message("assistant", avatar="🤖"):
-                st.write(f"오늘 날짜는 **{data_date}**입니다. **{stock['종목명']}** 종목에 대해 궁금한 점이 있으신가요?")
-            
+                # [변경] 노란 동그라미 해결: 데이터 날짜가 아닌 '진짜 오늘 날짜' 표시
+                st.write(f"오늘 날짜는 **{current_real_time}**입니다. **{stock['종목명']}** 종목에 대해 궁금한 점이 있으신가요?")
             for m in st.session_state.messages:
                 with st.chat_message(m["role"], avatar="🤖" if m["role"] == "assistant" else None):
                     st.markdown(m["content"])
-        
         if prompt := st.chat_input("질문하세요..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
@@ -278,8 +256,7 @@ if data is not None:
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"""당신은 한국의 주식 전문가입니다.
-                            현재 날짜는 {data_date}입니다. 한글로만 답변하십시오."""},
+                            {"role": "system", "content": f"당신은 한국의 주식 전문가입니다. 현재 날짜는 {current_real_time}입니다. 한글로만 답변하십시오."},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
