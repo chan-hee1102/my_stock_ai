@@ -20,8 +20,8 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 실제 시스템 오늘 날짜 (AI 비서 전용)
-today_real_time = datetime.now().strftime('%Y-%m-%d')
+# 실제 시스템 오늘 날짜 (2026-01-18)
+today_real_date = datetime.now().strftime('%Y-%m-%d')
 
 # 2) 디자인 CSS (찬희님 디자인 100% 유지)
 st.markdown(f"""
@@ -92,7 +92,7 @@ def load_data():
     latest_file = sorted(files)[-1]
     
     date_str = latest_file.split("_")[-1].replace(".csv", "")
-    formatted_date = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:]}" if 'date_part' in locals() else f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
     
     df = pd.read_csv(os.path.join(out_dir, latest_file))
     if "시장" in df.columns:
@@ -249,32 +249,30 @@ if data is not None:
                 """, unsafe_allow_html=True)
 
     with col_chat:
-        # [변경] AI COMMANDER -> AI 비서로 명칭 복구
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
         chat_container = st.container(height=800) 
         
         with chat_container:
-            # [변경] 종목 클릭 시 자동 전문가 브리핑 실행
             if not st.session_state.messages and client:
-                with st.spinner("AI 전문가가 실시간 뉴스를 분석 중입니다..."):
-                    # [지시사항] 찬희님이 요청하신 전문가 페르소나 및 출력 형식 강제
-                    auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_time} 기준으로 {stock['종목명']}의 최근 상승 이유를 뉴스를 바탕으로 요약해주고, 만약 악재가 있다면 함께 알려줘. 악재가 없으면 '없습니다'라고만 해.
+                with st.spinner("전략 분석 중..."):
+                    # [변경] 형광색 적용, 줄바꿈, 내일 전망 분석 추가 지침
+                    auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_date} 기준으로 {stock['종목명']}의 최근 상승 이유를 뉴스 기반으로 요약하고, 악재 또는 내일 장 기준의 주의사항을 전문적으로 분석해줘.
                     
-                    형식:
-                    최근 상승한 이유: (내용)
-                    악재: (내용)
+                    반드시 아래의 형식을 지켜서 답변해:
+                    <span style="color:#00e5ff; font-weight:800;">최근 상승한 이유:</span>
+                    (여기에 요약 내용을 한 줄 띄우고 상세히 작성)
+                    
+                    <span style="color:#00e5ff; font-weight:800;">악재 및 내일 전망:</span>
+                    (여기에 내일 장 기준의 리스크나 변수를 애널리스트 관점에서 한 줄 띄우고 작성)
                     
                     마지막엔 "종목에 대해 궁금한 점 있으시면 질문해주세요."라고 마무리해."""
                     
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"""당신은 대한민국 최고의 주식 투자 전문가입니다. 
-                            [절대 규칙] 
-                            1. 반드시 한국어로만 답변하십시오. 
-                            2. 한자(Hanja), 일본어, 중국어 사용을 '절대' 금지합니다. (예: 汽車 -> 자동차, 影響 -> 영향) 
-                            3. 악재가 전혀 없다면 반드시 '악재: 없습니다'라고만 답변하십시오. 
-                            4. 가독성을 위해 항목별로 명확히 줄바꿈하여 답변하십시오."""},
+                            {"role": "system", "content": """당신은 한국의 주식 전문가입니다. 
+                            반드시 한국어로만 답변하십시오. 한자(Hanja), 일본어, 중국어 사용은 절대 금지합니다.
+                            가독성을 위해 핵심 제목은 HTML 태그를 사용하고, 내용은 반드시 줄바꿈 후 작성하십시오."""},
                             {"role": "user", "content": auto_prompt}
                         ]
                     )
@@ -283,7 +281,7 @@ if data is not None:
             
             for m in st.session_state.messages:
                 with st.chat_message(m["role"], avatar="🤖" if m["role"] == "assistant" else None):
-                    st.markdown(m["content"])
+                    st.markdown(m["content"], unsafe_allow_html=True)
         
         if prompt := st.chat_input("종목 전략을 질문하세요..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -293,11 +291,10 @@ if data is not None:
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"""당신은 한국의 주식 전문가입니다. 
-                            현재 날짜는 {today_real_time}입니다. 한글로만 답변하십시오. 한자/일본어/중국어는 절대 쓰지 마세요."""},
+                            {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한글로만 답변하세요. 한자 사용은 금지합니다."},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
                     ans = res.choices[0].message.content
-                    st.markdown(ans)
+                    st.markdown(ans, unsafe_allow_html=True)
                     st.session_state.messages.append({"role": "assistant", "content": ans})
