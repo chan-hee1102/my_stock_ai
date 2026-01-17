@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from groq import Groq
 from datetime import datetime
 import numpy as np
+import pandas_ta as ta  # AI 모델 지표 계산용 추가
+import joblib           # 모델 로드용 추가
 
 # 1) 페이지 설정 및 세션 초기화
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
@@ -21,7 +23,7 @@ if "messages" not in st.session_state:
 # 실제 시스템 오늘 날짜
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
-# 2) 디자인 CSS (찬희님 디자인 유지 및 채팅 입력칸 최하단 밀착)
+# 2) 디자인 CSS (찬희님 디자인 유지)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #05070a; }}
@@ -62,7 +64,6 @@ st.markdown(f"""
     .finance-header-box {{ background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 15px; margin-bottom: 5px; width: 100%; display: flex; align-items: center; }}
     .finance-label-compact {{ color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }}
     
-    /* 채팅 입력창 위치 및 영역 최적화 */
     div[data-testid="stChatInput"] {{ 
         background-color: #ffffff !important; 
         border-radius: 12px !important; 
@@ -106,26 +107,38 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list)
     except: return None
 
-def calculate_technical_probability(code, market):
+# [업그레이드] 실시간 AI 모델 예측 함수
+def calculate_ai_probability(df):
     try:
-        ticker = code + (".KS" if market == "KOSPI" else ".KQ")
-        df = yf.download(ticker, period="1y", interval="1d", progress=False)
-        if df.empty or len(df) < 40: return 50, "데이터 부족"
-        df = df[(df['Close'] > 0) & (df['Open'] > 0)].copy()
-        close = df['Close']
-        df['MA20'] = close.rolling(20).mean()
-        df['Disparity'] = (close / df['MA20']) * 100
-        delta = close.diff()
-        gain, loss = (delta.where(delta > 0, 0)).rolling(14).mean(), (-delta.where(delta < 0, 0)).rolling(14).mean()
-        df['RSI'] = 100 - (100 / (1 + (gain / loss)))
-        curr = df.iloc[-1]
-        df['Next_Day_Up'] = (df['Close'].shift(-1) > df['Close']).astype(int)
-        similar_days = df[(df['RSI'] > curr['RSI'] - 7) & (df['RSI'] < curr['RSI'] + 7) & (df['Disparity'] > curr['Disparity'] - 5) & (df['Disparity'] < curr['Disparity'] + 5)]
-        if len(similar_days) > 5:
-            prob = int(similar_days['Next_Day_Up'].mean() * 100)
-            return min(max(prob, 15), 92), "기술적 패턴 매칭 완료"
-        return 53, "추세 기반 기본 분석"
-    except: return 50, "분석 시스템 대기"
+        if not os.path.exists("stock_model.pkl"):
+            return 50, "학습 모델(.pkl) 없음"
+        
+        # 학습한 모델 로드
+        model = joblib.load("stock_model.pkl")
+        
+        # 학습 때와 동일한 기술적 지표 계산 (피처 엔지니어링)
+        df['rsi'] = ta.rsi(df['Close'], length=14)
+        bb = ta.bbands(df['Close'], length=20, std=2)
+        if bb is not None:
+            l_col = [c for c in bb.columns if 'BBL' in c][0]
+            u_col = [c for c in bb.columns if 'BBU' in c][0]
+            df['bb_per'] = (df['Close'] - bb[l_col]) / (bb[u_col] - bb[l_col])
+        
+        ma5, ma20 = ta.sma(df['Close'], length=5), ta.sma(df['Close'], length=20)
+        df['ma_diff'] = (ma5 - ma20) / ma20
+        df['vol_ratio'] = df['Volume'] / df['Volume'].shift(1)
+        
+        # 마지막 행(오늘)의 피처 추출
+        last_features = df[['rsi', 'bb_per', 'ma_diff', 'vol_ratio']].tail(1)
+        
+        if last_features.isnull().values.any():
+            return 50, "분석 데이터 준비 중"
+            
+        # 모델 예측 (상승 확률 추출)
+        prob = model.predict_proba(last_features)[0][1] * 100
+        return round(prob, 1), "타겟 종목 특화 분석 완료"
+    except Exception as e:
+        return 50, f"분석 대기 ({str(e)})"
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -168,7 +181,7 @@ if data is not None:
         c1, c2 = st.columns([7, 3])
         with c1:
             try:
-                hist = tk.history(period="3mo").tail(40)
+                hist = tk.history(period="3mo").tail(60) # 분석을 위해 데이터 소폭 확장
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
@@ -201,12 +214,12 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        prob, msg = calculate_technical_probability(stock['종목코드'], stock['시장'])
-        st.markdown(f"""<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; display:block; margin-bottom:15px;">🎯 AI 내일 상승 확률 (기술적 백테스팅)</span><div style="color:#ffffff; font-size:2.8rem; font-weight:900;">{prob}%</div><div style="color:#8b949e; font-size:0.9rem;">{msg}</div></div>""", unsafe_allow_html=True)
+        # 🎯 [변경 핵심] 기존 백테스팅 확률을 지우고, 학습된 모델 확률을 출력
+        prob, msg = calculate_ai_probability(hist)
+        st.markdown(f"""<div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; padding:30px; text-align:center;"><span style="color:#00e5ff; font-size:1.2rem; font-weight:800; display:block; margin-bottom:15px;">🎯 타겟 종목 특화 AI 예측 확률</span><div style="color:#ffffff; font-size:2.8rem; font-weight:900;">{prob}%</div><div style="color:#8b949e; font-size:0.9rem;">{msg}</div></div>""", unsafe_allow_html=True)
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        # 영역 높이를 최대한 활용하여 하단 입력칸 위치 최적화
         chat_container = st.container(height=800) 
         
         with chat_container:
@@ -222,7 +235,6 @@ if data is not None:
             with chat_container:
                 with st.chat_message("user"): st.markdown(prompt)
                 with st.chat_message("assistant", avatar="🤖"):
-                    # [지시사항] 한국어 전용 모델 지침 및 타국어/한자 사용 금지 극단적 강화
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
@@ -230,8 +242,7 @@ if data is not None:
                             현재 날짜는 {today_real_date}입니다.
                             [중요] 반드시 표준 한국어로만 답변하십시오. 
                             일본어, 중국어, 한자(Hanja)는 절대 사용하지 마십시오. 
-                            예를 들어 '影響', '變化', '愼重' 같은 한자 표기는 금지하며 무조건 '영향', '변화', '신중'으로 한글만 써야 합니다.
-                            일본어 조사나 마침표(。)도 절대 사용하지 마십시오. 오직 한국어와 숫자만 사용합니다."""},
+                            무조건 한글만 써야 합니다."""},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
