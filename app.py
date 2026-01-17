@@ -10,7 +10,7 @@ from groq import Groq
 from datetime import datetime
 import numpy as np
 
-# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지)
+# 1) 페이지 설정 및 세션 초기화
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
 if "selected_stock" not in st.session_state:
@@ -18,10 +18,10 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# [수정] 실제 오늘 날짜 가져오기
+# 실제 시스템 오늘 날짜
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
-# 2) 디자인 CSS (찬희님 디자인 유지 및 채팅창 하단 여백 제거)
+# 2) 디자인 CSS (찬희님 디자인 유지 및 채팅 입력칸 최하단 밀착)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #05070a; }}
@@ -62,19 +62,24 @@ st.markdown(f"""
     .finance-header-box {{ background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 15px; margin-bottom: 5px; width: 100%; display: flex; align-items: center; }}
     .finance-label-compact {{ color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }}
     
-    /* [수정] 채팅 입력창 하단 밀착 및 메인 영역 하단 패딩 제거 */
-    div[data-testid="stChatInput"] {{ background-color: #ffffff !important; border-radius: 12px !important; padding-bottom: 0px !important; margin-bottom: -10px !important; }}
+    /* 채팅 입력창 위치 및 영역 최적화 */
+    div[data-testid="stChatInput"] {{ 
+        background-color: #ffffff !important; 
+        border-radius: 12px !important; 
+        padding: 0 !important; 
+        margin-top: 10px !important;
+    }}
+    .block-container {{ padding-bottom: 1rem !important; }}
     footer {{ visibility: hidden; }}
-    .block-container {{ padding-bottom: 2rem !important; }}
     </style>
     """, unsafe_allow_html=True)
 
 # 3) 기능 함수 정의
 def load_data():
     out_dir = "outputs"
-    if not os.path.exists(out_dir): return None, None
+    if not os.path.exists(out_dir): return None
     files = [f for f in os.listdir(out_dir) if f.startswith("final_result_") and f.endswith(".csv")]
-    if not files: return None, None
+    if not files: return None
     latest_file = sorted(files)[-1]
     df = pd.read_csv(os.path.join(out_dir, latest_file))
     if "시장" in df.columns:
@@ -142,7 +147,6 @@ if data is not None:
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
     with col_list:
-        # [수정] 사이드바 타이틀에 실제 오늘 날짜 반영
         st.markdown(f'<div class="section-header">📂 {today_real_date} 포착 리스트</div>', unsafe_allow_html=True)
         with st.container(height=800):
             for m_name in ["KOSPI", "KOSDAQ"]:
@@ -202,12 +206,11 @@ if data is not None:
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        # [수정] 높이를 조정하여 입력창 위치 최적화
-        chat_container = st.container(height=780) 
+        # 영역 높이를 최대한 활용하여 하단 입력칸 위치 최적화
+        chat_container = st.container(height=800) 
         
         with chat_container:
             with st.chat_message("assistant", avatar="🤖"):
-                # [수정] 실제 오늘 날짜 출력
                 st.write(f"오늘 날짜는 **{today_real_date}**입니다. **{stock['종목명']}** 종목에 대해 궁금한 점이 있으신가요?")
             
             for m in st.session_state.messages:
@@ -219,11 +222,16 @@ if data is not None:
             with chat_container:
                 with st.chat_message("user"): st.markdown(prompt)
                 with st.chat_message("assistant", avatar="🤖"):
-                    # [지침] 2026년 날짜 주입 및 언어 잠금
+                    # [지시사항] 한국어 전용 모델 지침 및 타국어/한자 사용 금지 극단적 강화
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"당신은 한국 최고의 주식 전문가입니다. 현재 날짜는 {today_real_date}입니다. 반드시 한국어로만 답변하고 중국어/일본어/한자는 절대 사용하지 마십시오."},
+                            {"role": "system", "content": f"""당신은 한국의 주식 전문가입니다.
+                            현재 날짜는 {today_real_date}입니다.
+                            [중요] 반드시 표준 한국어로만 답변하십시오. 
+                            일본어, 중국어, 한자(Hanja)는 절대 사용하지 마십시오. 
+                            예를 들어 '影響', '變化', '愼重' 같은 한자 표기는 금지하며 무조건 '영향', '변화', '신중'으로 한글만 써야 합니다.
+                            일본어 조사나 마침표(。)도 절대 사용하지 마십시오. 오직 한국어와 숫자만 사용합니다."""},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
