@@ -20,7 +20,7 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# [요구사항 5] 페이지 접속 시점의 실제 오늘 날짜 (2026-01-18)
+# [요구사항 5 반영] 페이지 접속 시점의 실제 오늘 날짜 (2026-01-18)
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
 # 2) 디자인 CSS (찬희님 디자인 100% 유지)
@@ -121,8 +121,7 @@ def get_investor_trend(code):
 
 def calculate_ai_probability(df):
     try:
-        if not os.path.exists("stock_model.pkl"):
-            return 50, "학습 모델(.pkl) 없음", []
+        if not os.path.exists("stock_model.pkl"): return 50, "학습 모델 없음", []
         model = joblib.load("stock_model.pkl")
         df['rsi'] = ta.rsi(df['Close'], length=14)
         bb = ta.bbands(df['Close'], length=20, std=2)
@@ -138,8 +137,8 @@ def calculate_ai_probability(df):
         if last_features.isnull().values.any(): return 50, "분석 데이터 준비 중", []
         prob = model.predict_proba(last_features)[0][1] * 100
         reasons = [
-            {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
-            {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중심권"},
+            {"label": "시장 심리 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
+            {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중중심권"},
             {"label": "이평 에너지 (MA Diff)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "정배열" if last['ma_diff'] > 0 else "역배열"},
             {"label": "수급 모멘텀 (Vol Ratio)", "val": f"{round(float(last['vol_ratio']), 1)}배", "desc": "수급폭발" if last['vol_ratio'] > 2 else "유입중"}
         ]
@@ -246,21 +245,21 @@ if data is not None:
         with chat_container:
             if not st.session_state.messages and client:
                 with st.spinner("전문 애널리스트가 실시간 시장을 분석 중입니다..."):
-                    # [변경] 요구사항 1~5 통합 반영: 민트색 강조, 줄바꿈, 실시간 전문 분석
+                    # [변경] 요구사항 1~5 통합 반영: 민트색 강조 HTML 강제, 줄바꿈 2번, 실시간 전문 분석
                     auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_date} 기준으로 {stock['종목명']}을 분석해줘.
                     
-                    반드시 아래의 형식을 '정확히' 지켜서 답변해 (HTML 태그 포함):
-                    <span style='color:#00e5ff; font-weight:800;'>테마:</span>
+                    반드시 아래의 형식을 '토씨 하나 틀리지 말고' 지켜서 답변해:
+                    <span style='color:#00e5ff; font-weight:bold;'>테마:</span>
                     
-                    (해당 종목이 현재 시장에서 가장 주목받는 '실시간 테마'를 애널리스트처럼 분석해서 한두 줄로 작성해줘. 예: '피지컬 AI 및 휴머노이드 로봇 핵심 부품 테마' 등)
+                    (해당 종목이 현재 시장에서 {today_real_date} 기준으로 가장 주목받는 '실시간 테마'를 전문 용어를 써서 한두 줄로 분석해줘. 예: '피지컬 AI 및 휴머노이드 로봇 핵심 부품 공급 테마' 등)
                     
-                    <span style='color:#00e5ff; font-weight:800;'>최근 상승한 이유:</span>
+                    <span style='color:#00e5ff; font-weight:bold;'>최근 상승한 이유:</span>
                     
-                    (오늘 날짜 실시간 뉴스 기반으로 상승 동력을 분석하여 한 줄 띄우고 상세히 작성하되, 불필요한 미사여구는 빼고 가독성 좋게 엔터를 섞어줘)
+                    (오늘 날짜 실시간 뉴스 기반으로 {stock['종목명']}의 상승 동력을 상세히 분석하되, 반드시 한 줄 띄우고 본문을 시작해줘. 가독성 좋게 엔터를 섞어서 작성해.)
                     
-                    <span style='color:#00e5ff; font-weight:800;'>악재 및 내일 전망:</span>
+                    <span style='color:#00e5ff; font-weight:bold;'>악재 및 내일 전망:</span>
                     
-                    (뉴스 기준 리스크 변수나 내일 장 전망을 분석하여 한 줄 띄우고 작성. 악재가 없으면 내일의 기술적 대응 전략을 전문가처럼 써줘)
+                    (실시간 리스크나 내일 장 전망을 애널리스트 관점에서 분석해줘. 악재가 없으면 기술적 대응 전략을 전문가처럼 한 줄 띄우고 써줘.)
                     
                     마지막엔 "{stock['종목명']}에 대해 궁금한 점 있으시면 질문해주세요."라고 마무리해."""
                     
@@ -268,11 +267,11 @@ if data is not None:
                         model="llama-3.3-70b-versatile", 
                         messages=[
                             {"role": "system", "content": f"""당신은 대한민국 최고의 주식 투자 전문가입니다. 
-                            [절대 규칙] 
+                            [절대 규칙 - 위반 시 답변 실패] 
                             1. 반드시 한국어로만 답변하십시오. 
-                            2. 한자(Hanja), 일본어, 중국어 사용을 '절대' 금지합니다. (汽車 -> 자동차, 影響 -> 영향) 
-                            3. 'several', 'recently', 'factors' 같은 불필요한 영어 단어를 절대 섞지 마십시오. 오직 한국어만 사용합니다. (AI, EV 등 전문 용어만 허용)
-                            4. 각 항목 헤더(<span...>) 뒤에는 반드시 엔터(줄바꿈)를 두 번 입력하십시오.
+                            2. 한자(Hanja), 일본어 사용을 '절대' 금지합니다. (汽車 -> 자동차, 影響 -> 영향, 探索 -> 탐색, 尤其 -> 특히) 
+                            3. 'several', 'recently', 'factors' 같은 불필요한 영어 수식어를 절대 섞지 마십시오. 오직 한국어만 사용합니다.
+                            4. 각 항목 헤더(<span...>) 뒤에는 반드시 '엔터(줄바꿈)'를 두 번 입력하십시오.
                             5. 현재 날짜 {today_real_date}를 기준으로 실시간 뉴스 정보를 반영하십시오."""},
                             {"role": "user", "content": auto_prompt}
                         ]
