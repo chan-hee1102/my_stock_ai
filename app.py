@@ -20,10 +20,10 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 실제 시스템 오늘 날짜 (2026-01-18)
+# [요구사항 5 반영] 페이지를 켜는 순간의 실제 오늘 날짜 (실시간 정보 반영의 기초)
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
-# 2) 디자인 CSS (찬희님 오리지널 디자인 100% 유지)
+# 2) 디자인 CSS (찬희님 디자인 100% 유지)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #05070a; }}
@@ -146,7 +146,7 @@ def calculate_ai_probability(df):
         prob = model.predict_proba(last_features)[0][1] * 100
         
         reasons = [
-            {"label": "시장 심리 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
+            {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
             {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중심권"},
             {"label": "이평 에너지 (MA Diff)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "정배열" if last['ma_diff'] > 0 else "역배열"},
             {"label": "수급 모멘텀 (Vol Ratio)", "val": f"{round(float(last['vol_ratio']), 1)}배", "desc": "수급폭발" if last['vol_ratio'] > 2 else "유입중"}
@@ -262,19 +262,22 @@ if data is not None:
         
         with chat_container:
             if not st.session_state.messages and client:
-                with st.spinner("전문 애널리스트가 시장을 분석 중입니다..."):
-                    # [변경] 테마 추가, 형광색 적용, 줄바꿈 최적화 지침
+                with st.spinner("전문 애널리스트가 실시간 뉴스를 분석 중입니다..."):
+                    # [요구사항 1, 3, 4, 5 반영] 형광색 강조, 줄바꿈 최적화, 전문 테마 분석 지침
                     auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_date} 기준으로 {stock['종목명']}을 분석해줘.
                     
-                    반드시 아래의 형식을 '정확히' 지켜서 답변해:
+                    반드시 아래의 형식을 '정확히' 지켜서 답변해 (헤더 태그 포함):
                     <span style="color:#00e5ff; font-weight:800;">테마:</span>
-                    (해당 종목이 속한 핵심 테마와 시장의 관심도를 요약하여 작성)
+                    
+                    (해당 종목이 현재 시장에서 가장 주목받는 구체적인 테마를 한두 줄로 요약. 예: '피지컬 AI 및 휴머노이드 로봇 핵심 부품 테마' 등)
                     
                     <span style="color:#00e5ff; font-weight:800;">최근 상승한 이유:</span>
-                    (최근 뉴스를 기반으로 상승 동력을 분석하여 한 줄 띄우고 상세히 작성)
+                    
+                    (최근 뉴스를 기반으로 상승 동력을 분석하여 상세히 작성하되, 가독성을 위해 불필요한 미사여구는 빼고 엔터를 적절히 섞어줘)
                     
                     <span style="color:#00e5ff; font-weight:800;">악재 및 내일 전망:</span>
-                    (리스크 변수나 내일 장 기준의 전망을 분석하여 한 줄 띄우고 작성. 악재가 전혀 없다면 '현재 뉴스상 포착된 뚜렷한 악재는 없으나, 매크로 변수에 유의하십시오'라고 작성)
+                    
+                    (리스크 변수나 내일 장 기준의 전망을 분석하여 작성. 악재가 전혀 없다면 내일의 기술적 대응 전략을 전문가처럼 써줘)
                     
                     마지막엔 "{stock['종목명']}에 대해 궁금한 점 있으시면 질문해주세요."라고 마무리해."""
                     
@@ -284,9 +287,9 @@ if data is not None:
                             {"role": "system", "content": f"""당신은 대한민국 최고의 주식 투자 전문가입니다. 
                             [절대 규칙] 
                             1. 반드시 한국어로만 답변하십시오. 
-                            2. 한자(Hanja), 일본어, 중국어 사용을 '절대' 금지합니다. (예: 要인 -> 요인, 要因 -> 요인, 汽車 -> 자동차) 
-                            3. 모든 답변은 한글과 숫자, 필수적인 영문(AI, EV 등)으로만 구성하십시오. 한자가 하나라도 섞이면 안 됩니다.
-                            4. 가독성을 위해 항목 헤더 뒤에는 반드시 줄바꿈을 두 번 하십시오."""},
+                            2. 한자(Hanja), 일본어, 중국어 사용을 '절대' 금지합니다. (예: 要인 -> 요인, 汽車 -> 자동차, 影響 -> 영향) 
+                            3. 모든 답변은 한글과 숫자, 필수적인 영문(AI, EV 등)으로만 구성하십시오. 한자가 하나라도 섞이면 답변 실패입니다.
+                            4. 가독성을 위해 각 항목 헤더(<span...>) 뒤에는 반드시 엔터(줄바꿈)를 두 번 입력하고 본문을 시작하십시오."""},
                             {"role": "user", "content": auto_prompt}
                         ]
                     )
@@ -305,7 +308,7 @@ if data is not None:
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한글로만 답변하세요. 한자/일본어/중국어는 절대 금지합니다."},
+                            {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한글로만 답변하세요. 한자 사용은 절대 금지합니다."},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
