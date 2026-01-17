@@ -10,7 +10,7 @@ from groq import Groq
 from datetime import datetime
 import numpy as np
 
-# 1) 페이지 설정 및 세션 초기화
+# 1) 페이지 설정 및 세션 초기화 (AttributeError 방지)
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
 if "selected_stock" not in st.session_state:
@@ -18,49 +18,54 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 2) 디자인 CSS (찬희님 디자인 100% 고정)
-st.markdown("""
+# [수정] 실제 오늘 날짜 가져오기
+today_real_date = datetime.now().strftime('%Y-%m-%d')
+
+# 2) 디자인 CSS (찬희님 디자인 유지 및 채팅창 하단 여백 제거)
+st.markdown(f"""
     <style>
-    .stApp { background-color: #05070a; }
-    [data-testid="stHorizontalBlock"] > div {
+    .stApp {{ background-color: #05070a; }}
+    [data-testid="stHorizontalBlock"] > div {{
         background-color: #1c2128; border-radius: 15px; padding: 20px; border: 1px solid #30363d;
         display: flex !important; flex-direction: column !important; justify-content: flex-start !important;
-    }
-    .section-header { 
+    }}
+    .section-header {{ 
         color: #00e5ff !important; font-size: 1.1rem !important; font-weight: 800; 
         margin-bottom: 20px; border-left: 6px solid #00e5ff; padding-left: 15px; 
-    }
-    .market-header {
+    }}
+    .market-header {{
         background-color: #0d1117; color: #8b949e; font-size: 1.0rem !important; font-weight: 800;
         text-align: center; padding: 8px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #30363d;
-    }
-    .stButton > button {
+    }}
+    .stButton > button {{
         width: 100% !important; background-color: transparent !important; color: #ffffff !important;
         border: none !important; font-size: 0.9rem !important; text-align: left !important; padding: 4px 0px !important;
-    }
-    .stButton > button:hover { color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }
+    }}
+    .stButton > button:hover {{ color: #00e5ff !important; transform: translateX(3px); transition: 0.2s; }}
     
-    [data-testid="stChatMessage"] {
+    [data-testid="stChatMessage"] {{
         background-color: #161b22 !important; border: 1px solid #30363d !important;
         border-radius: 12px !important; padding: 20px !important; margin-bottom: 10px !important;
-    }
-    [data-testid="stChatMessage"] * { color: #ffffff !important; opacity: 1 !important; font-size: 1.0rem !important; line-height: 1.6 !important; }
+    }}
+    [data-testid="stChatMessage"] * {{ color: #ffffff !important; opacity: 1 !important; font-size: 1.0rem !important; line-height: 1.6 !important; }}
 
-    .investor-table { width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff; }
-    .investor-table th { background-color: #0d1117; color: #8b949e; padding: 8px; border-bottom: 1px solid #30363d; }
-    .investor-table td { padding: 8px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; font-weight: 600; }
-    .val-plus { color: #ff3366; } 
-    .val-minus { color: #00e5ff; } 
+    .investor-table {{ width: 100%; border-collapse: collapse; font-size: 1.0rem; text-align: center; color: #ffffff; }}
+    .investor-table th {{ background-color: #0d1117; color: #8b949e; padding: 8px; border-bottom: 1px solid #30363d; }}
+    .investor-table td {{ padding: 8px; border-bottom: 1px solid #1c2128; font-family: 'Courier New', Courier, monospace; font-weight: 600; }}
+    .val-plus {{ color: #ff3366; }} 
+    .val-minus {{ color: #00e5ff; }} 
 
-    .report-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }
-    .info-line { color: #ffffff !important; font-size: 1rem; font-weight: 700; }
-    .highlight-mint { color: #00e5ff !important; font-weight: 800; }
+    .report-box {{ background-color: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 18px; margin-top: 15px; margin-bottom: 15px; }}
+    .info-line {{ color: #ffffff !important; font-size: 1rem; font-weight: 700; }}
+    .highlight-mint {{ color: #00e5ff !important; font-weight: 800; }}
     
-    .finance-header-box { background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 15px; margin-bottom: 5px; width: 100%; display: flex; align-items: center; }
-    .finance-label-compact { color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }
+    .finance-header-box {{ background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 15px; margin-bottom: 5px; width: 100%; display: flex; align-items: center; }}
+    .finance-label-compact {{ color: #00e5ff; font-size: 0.95rem; font-weight: 800; margin: 0; }}
     
-    /* 채팅 입력칸 영역 최하단 고정 */
-    div[data-testid="stChatInput"] { background-color: #ffffff !important; border-radius: 12px !important; padding-bottom: 0px !important; }
+    /* [수정] 채팅 입력창 하단 밀착 및 메인 영역 하단 패딩 제거 */
+    div[data-testid="stChatInput"] {{ background-color: #ffffff !important; border-radius: 12px !important; padding-bottom: 0px !important; margin-bottom: -10px !important; }}
+    footer {{ visibility: hidden; }}
+    .block-container {{ padding-bottom: 2rem !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -72,14 +77,12 @@ def load_data():
     if not files: return None, None
     latest_file = sorted(files)[-1]
     df = pd.read_csv(os.path.join(out_dir, latest_file))
-    # 파일명에서 날짜 추출 (예: 20260116)
-    data_date_raw = latest_file.split('_')[-1].replace('.csv', '')
     if "시장" in df.columns:
         df["시장"] = df["시장"].astype(str).str.strip()
         df.loc[df["시장"].str.contains("유가|KOSPI", na=False), "시장"] = "KOSPI"
         df.loc[df["시장"].str.contains("코스닥|KOSDAQ", na=False), "시장"] = "KOSDAQ"
     if "종목코드" in df.columns: df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
-    return df, data_date_raw
+    return df
 
 @st.cache_data(ttl=1800)
 def get_investor_trend(code):
@@ -128,12 +131,9 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
     return fig
 
 # 4) 메인 로직 실행
-data, data_date_str = load_data()
+data = load_data()
 groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 client = Groq(api_key=groq_api_key) if groq_api_key else None
-
-# 포착 리스트 날짜 가독성 (예: 2026-01-16)
-formatted_date = f"{data_date_str[:4]}-{data_date_str[4:6]}-{data_date_str[6:]}"
 
 if data is not None:
     if st.session_state.selected_stock is None:
@@ -142,7 +142,8 @@ if data is not None:
     col_list, col_main, col_chat = st.columns([2, 5, 3])
 
     with col_list:
-        st.markdown(f'<div class="section-header">📂 {formatted_date} 포착 리스트</div>', unsafe_allow_html=True)
+        # [수정] 사이드바 타이틀에 실제 오늘 날짜 반영
+        st.markdown(f'<div class="section-header">📂 {today_real_date} 포착 리스트</div>', unsafe_allow_html=True)
         with st.container(height=800):
             for m_name in ["KOSPI", "KOSDAQ"]:
                 m_df = data[data["시장"] == m_name]
@@ -165,7 +166,6 @@ if data is not None:
             try:
                 hist = tk.history(period="3mo").tail(40)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
-                # [차트 개선] 풀 넘버, 숫자 날짜, 그리드 투명도 최적화
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
@@ -202,28 +202,28 @@ if data is not None:
 
     with col_chat:
         st.markdown('<div class="section-header">🤖 AI 비서</div>', unsafe_allow_html=True)
-        # 채팅창 여백 최소화 레이아웃
-        chat_container = st.container(height=750) 
+        # [수정] 높이를 조정하여 입력창 위치 최적화
+        chat_container = st.container(height=780) 
         
         with chat_container:
             with st.chat_message("assistant", avatar="🤖"):
-                st.write(f"오늘 날짜는 **{formatted_date}**입니다. **{stock['종목명']}** 종목에 대해 궁금한 점이 있으신가요?")
+                # [수정] 실제 오늘 날짜 출력
+                st.write(f"오늘 날짜는 **{today_real_date}**입니다. **{stock['종목명']}** 종목에 대해 궁금한 점이 있으신가요?")
             
             for m in st.session_state.messages:
                 with st.chat_message(m["role"], avatar="🤖" if m["role"] == "assistant" else None):
                     st.markdown(m["content"])
         
-        # 입력창 위치 고정
         if prompt := st.chat_input("질문하세요..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
                 with st.chat_message("user"): st.markdown(prompt)
                 with st.chat_message("assistant", avatar="🤖"):
-                    # [중요] 한국어 전용 지침 및 날짜 정보 LLM 주입
+                    # [지침] 2026년 날짜 주입 및 언어 잠금
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"당신은 한국 최고의 주식 단타 전문가이자 증권사 수석 애널리스트입니다. 현재 날짜는 {formatted_date}이며, 모든 대화는 반드시 한국어로만 답변하십시오. 중국어나 일본어, 한자는 절대 사용하지 마십시오."},
+                            {"role": "system", "content": f"당신은 한국 최고의 주식 전문가입니다. 현재 날짜는 {today_real_date}입니다. 반드시 한국어로만 답변하고 중국어/일본어/한자는 절대 사용하지 마십시오."},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
