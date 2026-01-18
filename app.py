@@ -11,6 +11,7 @@ from datetime import datetime
 import numpy as np
 import pandas_ta as ta  # AI 모델 지표 계산용 추가
 import joblib           # 모델 로드용 추가
+import re               # [추가] 한자 및 외국어 필터링용
 
 # 1) 페이지 설정 및 세션 초기화
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
@@ -20,8 +21,14 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# [요구사항 5 반영] 페이지 접속 시점의 실제 오늘 날짜 (2026-01-18)
+# [요구사항 5] 페이지 접속 시점의 실제 오늘 날짜 (2026-01-18)
 today_real_date = datetime.now().strftime('%Y-%m-%d')
+
+# [전문가 기능] 한자 및 일본어를 강제로 제거하는 파이썬 필터 함수
+def clean_foreign_languages(text):
+    # 한자 범위(4E00-9FFF) 및 일본어 범위(3040-30FF)를 찾아 빈 문자로 대체
+    pattern = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\u31f0-\u31ff]')
+    return pattern.sub('', text)
 
 # 2) 디자인 CSS (찬희님 디자인 100% 유지)
 st.markdown(f"""
@@ -90,10 +97,8 @@ def load_data():
     files = [f for f in os.listdir(out_dir) if f.startswith("final_result_") and f.endswith(".csv")]
     if not files: return None, None
     latest_file = sorted(files)[-1]
-    
     date_str = latest_file.split("_")[-1].replace(".csv", "")
     formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
-    
     df = pd.read_csv(os.path.join(out_dir, latest_file))
     if "시장" in df.columns:
         df["시장"] = df["시장"].astype(str).str.strip()
@@ -138,7 +143,7 @@ def calculate_ai_probability(df):
         prob = model.predict_proba(last_features)[0][1] * 100
         reasons = [
             {"label": "시장 심리 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
-            {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중중심권"},
+            {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중심권"},
             {"label": "이평 에너지 (MA Diff)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "정배열" if last['ma_diff'] > 0 else "역배열"},
             {"label": "수급 모멘텀 (Vol Ratio)", "val": f"{round(float(last['vol_ratio']), 1)}배", "desc": "수급폭발" if last['vol_ratio'] > 2 else "유입중"}
         ]
@@ -244,22 +249,22 @@ if data is not None:
         
         with chat_container:
             if not st.session_state.messages and client:
-                with st.spinner("전문 애널리스트가 실시간 시장을 분석 중입니다..."):
-                    # [변경] 요구사항 1~5 통합 반영: 민트색 강조 HTML 강제, 줄바꿈 2번, 실시간 전문 분석
+                with st.spinner("애널리스트가 실시간 시장을 분석 중입니다..."):
+                    # [변경] 요구사항 1~5 통합 반영: 민트색 강조 HTML 강제, 줄바꿈 2번, 실시간 전문 테마 분석
                     auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_date} 기준으로 {stock['종목명']}을 분석해줘.
                     
-                    반드시 아래의 형식을 '토씨 하나 틀리지 말고' 지켜서 답변해:
+                    반드시 아래의 형식을 '정확히' 지켜서 답변해:
                     <span style='color:#00e5ff; font-weight:bold;'>테마:</span>
                     
                     (해당 종목이 현재 시장에서 {today_real_date} 기준으로 가장 주목받는 '실시간 테마'를 전문 용어를 써서 한두 줄로 분석해줘. 예: '피지컬 AI 및 휴머노이드 로봇 핵심 부품 공급 테마' 등)
                     
                     <span style='color:#00e5ff; font-weight:bold;'>최근 상승한 이유:</span>
                     
-                    (오늘 날짜 실시간 뉴스 기반으로 {stock['종목명']}의 상승 동력을 상세히 분석하되, 반드시 한 줄 띄우고 본문을 시작해줘. 가독성 좋게 엔터를 섞어서 작성해.)
+                    (오늘 날짜 실시간 뉴스 기반으로 {stock['종목명']}의 상승 동력을 상세히 분석하되, 반드시 제목 아래에 한 줄 띄우고 본문을 시작해줘. 가독성 좋게 엔터를 섞어서 작성해.)
                     
                     <span style='color:#00e5ff; font-weight:bold;'>악재 및 내일 전망:</span>
                     
-                    (실시간 리스크나 내일 장 전망을 애널리스트 관점에서 분석해줘. 악재가 없으면 기술적 대응 전략을 전문가처럼 한 줄 띄우고 써줘.)
+                    (실시간 리스크나 내일 장 전망을 분석해줘. 악재가 없으면 기술적 대응 전략을 전문가처럼 한 줄 띄우고 써줘.)
                     
                     마지막엔 "{stock['종목명']}에 대해 궁금한 점 있으시면 질문해주세요."라고 마무리해."""
                     
@@ -267,16 +272,17 @@ if data is not None:
                         model="llama-3.3-70b-versatile", 
                         messages=[
                             {"role": "system", "content": f"""당신은 대한민국 최고의 주식 투자 전문가입니다. 
-                            [절대 규칙 - 위반 시 답변 실패] 
+                            [절대 규칙 - 위반 시 분석 실패] 
                             1. 반드시 한국어로만 답변하십시오. 
-                            2. 한자(Hanja), 일본어 사용을 '절대' 금지합니다. (汽車 -> 자동차, 影響 -> 영향, 探索 -> 탐색, 尤其 -> 특히) 
-                            3. 'several', 'recently', 'factors' 같은 불필요한 영어 수식어를 절대 섞지 마십시오. 오직 한국어만 사용합니다.
+                            2. 한자(Hanja), 일본어 사용을 물리적으로 금지합니다. (汽車 -> 자동차, 要因 -> 요인, 影響 -> 영향) 
+                            3. 'several', 'recently' 같은 불필요한 영어 수식어를 절대 섞지 마십시오. 오직 한국어만 사용합니다.
                             4. 각 항목 헤더(<span...>) 뒤에는 반드시 '엔터(줄바꿈)'를 두 번 입력하십시오.
                             5. 현재 날짜 {today_real_date}를 기준으로 실시간 뉴스 정보를 반영하십시오."""},
                             {"role": "user", "content": auto_prompt}
                         ]
                     )
-                    initial_analysis = res.choices[0].message.content
+                    # [전문가 조치] LLM이 한자를 생성하더라도 파이썬 필터로 강제 제거
+                    initial_analysis = clean_foreign_languages(res.choices[0].message.content)
                     st.session_state.messages.append({"role": "assistant", "content": initial_analysis})
             
             for m in st.session_state.messages:
@@ -291,10 +297,11 @@ if data is not None:
                     res = client.chat.completions.create(
                         model="llama-3.3-70b-versatile", 
                         messages=[
-                            {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한국어만 사용하여 답변하세요. 한자/일본어/영어 수식어는 절대 금지합니다."},
+                            {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한국어만 사용하여 답변하세요. 한자/일본어/영어 수식어는 절대 금지하며 파이썬 필터가 적용됩니다."},
                             {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                         ]
                     )
-                    ans = res.choices[0].message.content
+                    # 실시간 채팅 답변도 한자 필터링 적용
+                    ans = clean_foreign_languages(res.choices[0].message.content)
                     st.markdown(ans, unsafe_allow_html=True)
                     st.session_state.messages.append({"role": "assistant", "content": ans})
