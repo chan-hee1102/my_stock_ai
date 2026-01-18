@@ -141,7 +141,7 @@ def calculate_ai_probability(df):
         if last_features.isnull().values.any(): return 50, "분석 데이터 준비 중", []
         prob = model.predict_proba(last_features)[0][1] * 100
         reasons = [
-            {"label": "시장 심리 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
+            {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
             {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중심권"},
             {"label": "이평 에너지 (MA Diff)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "정배열" if last['ma_diff'] > 0 else "역배열"},
             {"label": "수급 모멘텀 (Vol Ratio)", "val": f"{round(float(last['vol_ratio']), 1)}배", "desc": "수급폭발" if last['vol_ratio'] > 2 else "유입중"}
@@ -159,8 +159,9 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
 
 # 4) 메인 로직 실행
 data, data_date = load_data() 
-groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
-# [에러 방지] 키가 유효할 때만 클라이언트 생성
+
+# [인증 오류 해결 핵심] API 키를 가져올 때 양끝 공백을 제거(.strip())
+groq_api_key = st.secrets.get("GROQ_API_KEY", "").strip()
 client = Groq(api_key=groq_api_key) if groq_api_key and len(groq_api_key) > 10 else None
 
 if data is not None:
@@ -248,24 +249,23 @@ if data is not None:
         chat_container = st.container(height=800) 
         
         with chat_container:
-            # [전문가 분석 모드] 인증 성공 시에만 분석 실행
+            # [전문가 분석 모드]
             if not st.session_state.messages and client:
                 with st.spinner("애널리스트가 실시간 시장을 분석 중입니다..."):
-                    # [변경] 요구사항 반영: 민트색 강조 HTML 강제, 줄바꿈 2번, 실시간 전문 분석
                     auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_date} 기준으로 {stock['종목명']}을 분석해줘.
                     
                     반드시 아래의 형식을 '정확히' 지켜서 답변해 (헤더 태그 포함):
                     <span style='color:#00e5ff; font-weight:bold;'>테마:</span>
                     
-                    (해당 종목이 현재 시장에서 {today_real_date} 기준으로 가장 주목받는 '실시간 테마'를 전문 용어를 써서 한두 줄로 분석해줘.)
+                    (해당 종목이 현재 시장에서 {today_real_date} 기준으로 가장 주목받는 '실시간 테마'를 전문 분석해줘.)
                     
                     <span style='color:#00e5ff; font-weight:bold;'>최근 상승한 이유:</span>
                     
-                    (오늘 날짜 실시간 뉴스 기반으로 {stock['종목명']}의 상승 동력을 상세히 분석하되, 반드시 제목 아래에 한 줄 띄우고 본문을 시작해줘. 가독성 좋게 엔터를 섞어서 작성해.)
+                    (오늘 날짜 실시간 뉴스 기반으로 {stock['종목명']}의 상승 동력을 상세히 분석하되, 반드시 제목 아래에 한 줄 띄우고 본문을 시작해줘.)
                     
                     <span style='color:#00e5ff; font-weight:bold;'>악재 및 내일 전망:</span>
                     
-                    (실시간 리스크나 내일 장 전망을 분석해줘. 악재가 없으면 기술적 대응 전략을 전문가처럼 써줘.)
+                    (실시간 리스크나 내일 장 전망을 분석해줘. 악재가 없으면 기술적 대응 전략을 한 줄 띄우고 써줘.)
                     
                     마지막엔 "{stock['종목명']}에 대해 궁금한 점 있으시면 질문해주세요."라고 마무리해."""
                     
@@ -273,17 +273,16 @@ if data is not None:
                         res = client.chat.completions.create(
                             model="llama-3.3-70b-versatile", 
                             messages=[
-                                {"role": "system", "content": f"당신은 대한민국 최고의 주식 투자 전문가입니다. [절대 규칙] 1. 반드시 한국어로만 답변하십시오. 2. 한자(Hanja), 일본어 사용을 물리적으로 금지합니다. 3. 불필요한 영어 수식어를 금지합니다. 4. 각 항목 헤더(<span...>) 뒤에는 반드시 '엔터(줄바꿈)'를 두 번 입력하십시오. 5. 현재 날짜 {today_real_date}를 기준으로 실시간 뉴스 정보를 반영하십시오."},
+                                {"role": "system", "content": f"당신은 대한민국 최고의 주식 투자 전문가입니다. [절대 규칙] 1. 반드시 한국어로만 답변하십시오. 2. 한자(Hanja), 일본어 사용을 물리적으로 금지합니다. 3. 불필요한 영어 단어를 금지합니다. 4. 각 항목 헤더(<span...>) 뒤에는 반드시 '엔터(줄바꿈)'를 두 번 입력하십시오."},
                                 {"role": "user", "content": auto_prompt}
                             ]
                         )
-                        # [물리적 필터 적용] 한자 한 톨도 허용하지 않음
                         initial_analysis = clean_foreign_languages(res.choices[0].message.content)
                         st.session_state.messages.append({"role": "assistant", "content": initial_analysis})
                     except Exception as e:
-                        st.error(f"Groq API 인증 오류가 발생했습니다. Streamlit Cloud의 Secrets 설정을 확인해주세요: {str(e)}")
+                        st.error(f"API 인증 오류: {str(e)}")
             elif not client:
-                st.warning("⚠️ AI 비서가 비활성화되었습니다. Streamlit Cloud 설정(Settings -> Secrets)에서 'GROQ_API_KEY'를 추가해 주세요.")
+                st.warning("⚠️ API 키 설정을 확인해 주세요. (Settings -> Secrets)")
 
             for m in st.session_state.messages:
                 with st.chat_message(m["role"], avatar="🤖" if m["role"] == "assistant" else None):
@@ -298,12 +297,10 @@ if data is not None:
                         res = client.chat.completions.create(
                             model="llama-3.3-70b-versatile", 
                             messages=[
-                                {"role": "system", "content": f"주식 전문가로서 {today_real_date} 시점의 데이터를 기반으로 한글로만 답변하세요. 한자/일본어/영어 금지 필터가 적용됩니다."},
+                                {"role": "system", "content": "주식 전문가로서 한국어만 사용하여 답변하세요. 한자/일본어 금지 필터가 적용됩니다."},
                                 {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
                             ]
                         )
                         ans = clean_foreign_languages(res.choices[0].message.content)
                         st.markdown(ans, unsafe_allow_html=True)
                         st.session_state.messages.append({"role": "assistant", "content": ans})
-                    else:
-                        st.error("API 키 인증 오류로 인해 답변할 수 없습니다.")
