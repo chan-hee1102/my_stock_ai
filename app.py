@@ -30,7 +30,7 @@ def clean_foreign_languages(text):
     pattern = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\u31f0-\u31ff]')
     return pattern.sub('', text)
 
-# 2) 디자인 CSS (찬희님 디자인 100% 유지)
+# 2) 디자인 CSS (사용자 디자인 100% 유지)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #05070a; }}
@@ -124,12 +124,13 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list)
     except: return None
 
-# [신규 추가] 실시간 매크로 지표 수집 함수
+# [신규 추가] 실시간 매크로 지표 수집 함수 (AI 모델 연동용)
 @st.cache_data(ttl=3600)
 def get_macro_data():
     try:
         end = datetime.now()
         start = end - timedelta(days=20)
+        # 나스닥, VIX, 달러, 국채금리, 금
         nasdaq = yf.download("^IXIC", start=start, end=end, progress=False)['Close'].pct_change()
         vix = yf.download("^VIX", start=start, end=end, progress=False)['Close']
         dxy = yf.download("DX-Y.NYB", start=start, end=end, progress=False)['Close'].pct_change()
@@ -139,15 +140,16 @@ def get_macro_data():
         def clean(s): return s.iloc[:, 0] if isinstance(s, pd.DataFrame) else s
         return clean(nasdaq).iloc[-1], clean(vix).iloc[-1], clean(dxy).iloc[-1], clean(tnx).iloc[-1], clean(gold).iloc[-1]
     except:
-        return 0, 15, 0, 4.0, 0
+        return 0.0, 15.0, 0.0, 4.0, 0.0
 
 # [수정] 64.5% 모델 피처 세트로 고도화된 확률 계산 함수
 def calculate_ai_probability(df, market_df):
     try:
-        if not os.path.exists("stock_model.pkl"): return 50, "학습 모델 없음", []
+        if not os.path.exists("stock_model.pkl"): 
+            return 50.0, "학습 모델 없음", []
         model = joblib.load("stock_model.pkl")
         
-        # 1. 기술적 지표 (훈련 데이터와 동일하게 계산)
+        # 1. 기술적 지표 계산 (훈련 스크립트 v1.6과 동일 로직)
         df['rsi'] = ta.rsi(df['Close'], length=14)
         bb = ta.bbands(df['Close'], length=20, std=2)
         l_col = [c for c in bb.columns if 'BBL' in c][0]
@@ -175,7 +177,7 @@ def calculate_ai_probability(df, market_df):
         df['vol_roc'] = ta.roc(df['Volume'], length=5)
         df['day_of_week'] = df.index.dayofweek
         
-        # 2. 실시간 매크로 데이터 병합
+        # 2. 실시간 글로벌 매크로 지표 병합
         n_ret, v_cls, d_ret, t_cls, g_ret = get_macro_data()
         df['nasdaq_return'] = n_ret
         df['vix_close'] = v_cls
@@ -183,7 +185,7 @@ def calculate_ai_probability(df, market_df):
         df['tnx_close'] = t_cls
         df['gold_return'] = g_ret
         
-        # 3. 예측 실행
+        # 3. 모델이 기대하는 20가지 피처 순서 정렬
         feature_cols = [
             'rsi', 'bb_per', 'ma_diff', 'vol_consecutive_days', 'vol_spike_ratio', 
             'candle_body', 'relative_strength', 'macd_hist', 'mfi', 'atr_ratio',
@@ -192,19 +194,21 @@ def calculate_ai_probability(df, market_df):
         ]
         
         last_features = df[feature_cols].tail(1)
-        if last_features.isnull().values.any(): return 50, "분석 데이터 수집 중", []
+        if last_features.isnull().values.any(): 
+            return 50.0, "분석 데이터 지연 수집 중", []
         
         prob = model.predict_proba(last_features)[0][1] * 100
         last = df.iloc[-1]
         
         reasons = [
-            {"label": "글로벌 공포 지수 (VIX)", "val": f"{v_cls:.1f}", "desc": "안정" if v_cls < 20 else "공포 심리 확산"},
-            {"label": "미 국채 금리 (10Y)", "val": f"{t_cls:.2f}%", "desc": "자산 이동 주의" if t_cls > 4.2 else "안정적 흐름"},
-            {"label": "상대 강도 (RS)", "val": f"{round(float(last['relative_strength'])*100, 1)}%", "desc": "시장 주도주" if last['relative_strength'] > 0 else "시장 하회"},
-            {"label": "수급 모멘텀 (Vol ROC)", "val": f"{round(float(last['vol_roc']), 1)}%", "desc": "에너지 폭발" if last['vol_roc'] > 20 else "관망세"}
+            {"label": "글로벌 공포 지수 (VIX)", "val": f"{v_cls:.1f}", "desc": "안정" if v_cls < 20 else "시장 공포 확산"},
+            {"label": "국채 금리 (10Y)", "val": f"{t_cls:.2f}%", "desc": "자산 이동 주의" if t_cls > 4.2 else "안정적 금리"},
+            {"label": "상대 강도 (RS)", "val": f"{round(float(last['relative_strength'])*100, 1)}%", "desc": "시장 주도" if last['relative_strength'] > 0 else "시장 하회"},
+            {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과열주의" if last['rsi'] > 65 else "과매도권" if last['rsi'] < 35 else "중립"}
         ]
         return round(prob, 1), "전 세계 매크로 팩터 분석 완료", reasons
-    except Exception as e: return 50, f"분석 대기 ({str(e)})", []
+    except Exception as e: 
+        return 50.0, f"분석 엔진 대기 ({str(e)})", []
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -248,7 +252,7 @@ if data is not None:
         c1, c2 = st.columns([7, 3])
         with c1:
             try:
-                # 차트 및 AI 피처 계산을 위해 기간 확장
+                # 차트 및 AI 피처 계산을 위해 기간 확장 (최소 60일 데이터 필요)
                 hist = tk.history(period="6mo").tail(100)
                 m_hist = yf.download(market_idx, period="6mo", progress=False)['Close'].tail(100)
                 
@@ -289,7 +293,7 @@ if data is not None:
         st.markdown('<div class="section-header" style="margin-top:30px;">🚀 AI PREDICTIVE STRATEGY: 5개년 데이터 모델링 기반 익일 기대수익 확률</div>', unsafe_allow_html=True)
         prob_col, reason_col = st.columns([4, 6])
         with prob_col:
-            # 확률에 따른 바 색상 로직 (60% 이상은 주도주 강조 빨간색 테두리)
+            # 확률에 따른 바 테두리 색상 로직 적용 (60% 이상이면 주도주 강조 빨간색)
             bar_border = "#ff3366" if prob > 60 else "#00e5ff"
             st.markdown(f"""
                 <div style="background-color:#161b22; border:1px dashed {bar_border}; border-radius:12px; height:280px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
