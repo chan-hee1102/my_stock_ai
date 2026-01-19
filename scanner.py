@@ -1,182 +1,181 @@
 # -*- coding: utf-8 -*-
-import warnings
-warnings.filterwarnings("ignore")
-
-import os
-import time
-import random
-import requests
 import pandas as pd
-from datetime import datetime
-from bs4 import BeautifulSoup
-from groq import Groq  # AI 분석을 위해 추가
+import pandas_ta as ta
+import yfinance as yf
+from pykrx import stock
+from lightgbm import LGBMClassifier
+import joblib
+from datetime import datetime, timedelta
+import os
+import warnings
+import logging
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import numpy as np
+
+# [엔지니어 조치] 터미널 가독성 확보 및 불필요한 로그 차단
+warnings.filterwarnings("ignore")
+logging.getLogger("lightgbm").setLevel(logging.ERROR)
 
 # =========================
-# 1. 파라미터 설정 (찬희님 로직 반영)
+# 1. 설정 및 경로
 # =========================
-FULL_COUNT = 320
-LOOKBACK_20 = 20
-VOL_RATIO_THRESHOLD = 5.0
-TURNOVER_MAX_20_THRESHOLD = 1000 * 1e8   # 1000억
-LAST_TURNOVER_THRESHOLD   = 50   * 1e8   # 50억
-SLOPE_LOOKBACK_DAYS = 5
+OUTPUT_DIR = "outputs"
+MODEL_NAME = "stock_model.pkl"
+TRAIN_YEARS = 6 
 
-# 일목균형표 파라미터
-ICHIMOKU_TENKAN = 9
-ICHIMOKU_KIJUN  = 26
-
-# 서버 부하 방지용 슬립
-SLEEP_MIN = 0.05
-SLEEP_MAX = 0.15
-RETRY_FULL  = 2
-
-OUT_DIR = "outputs"
-os.makedirs(OUT_DIR, exist_ok=True)
-
-# [수정] API 키 불러오기: st.secrets 대신 os.getenv 사용 (GitHub Actions 호환)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-
-# =========================
-# 2. 유틸리티 및 데이터 수집
-# =========================
-def today_yyyymmdd():
-    return datetime.today().strftime("%Y%m%d")
-
-def to_eok(x):
-    return int(round(x / 1e8, 0))
-
-def safe_get(url, params):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Referer": "https://finance.naver.com/"
-    }
-    r = requests.get(url, params=params, headers=headers, timeout=15)
-    r.raise_for_status()
-    return r.text
-
-def get_listing():
-    print("[INFO] KRX 종목 리스트 수집 중...")
-    url = "https://kind.krx.co.kr/corpgeneral/corpList.do"
-    r = requests.get(url, params={"method": "download"}, timeout=15)
-    df = pd.read_html(r.text, header=0)[0]
-    df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
-    return pd.DataFrame({
-        "Code": df["종목코드"],
-        "Name": df["회사명"],
-        "Market": df["시장구분"] if "시장구분" in df.columns else "Unknown"
-    })
-
-def get_ohlcv(code, count):
-    url = "https://fchart.stock.naver.com/sise.nhn"
-    params = {"symbol": code, "timeframe": "day", "count": str(count), "requestType": "0"}
+def get_latest_selected_stocks():
+    """임찬희님의 전략으로 추출된 최신 종목 리스트 로드"""
     try:
-        xml = safe_get(url, params)
-        soup = BeautifulSoup(xml, "lxml-xml")
-        items = soup.find_all("item")
-        if not items: return None
-        rows = []
-        for it in items:
-            d = it["data"].split("|")
-            rows.append({"Date": pd.to_datetime(d[0]), "Open": int(d[1]), "High": int(d[2]),
-                         "Low":  int(d[3]), "Close": int(d[4]), "Volume": int(d[5])})
-        return pd.DataFrame(rows).sort_values("Date").set_index("Date")
-    except: return None
+        files = [f for f in os.listdir(OUTPUT_DIR) if f.startswith("final_result_") and f.endswith(".csv")]
+        if not files: return None
+        latest_file = sorted(files)[-1]
+        print(f"📂 [타겟 확장] '{latest_file}' 기반 2거래일 상승 확률 학습 시작")
+        df = pd.read_csv(os.path.join(OUTPUT_DIR, latest_file))
+        return [str(code).zfill(6) for code in df['종목코드'].tolist()]
+    except Exception as e:
+        print(f"❌ 데이터 로드 실패: {e}"); return None
 
-def get_ohlcv_retry(code, count, retry):
-    for _ in range(retry + 1):
-        df = get_ohlcv(code, count)
-        if df is not None and not df.empty: return df
-        time.sleep(0.3)
-    return None
-
-# =========================
-# 3. 기술적 분석 조건 (찬희님 오리지널 로직)
-# =========================
-def has_vol_spike(df):
-    rv = df.tail(LOOKBACK_20 + 2)
-    r1 = rv["Volume"] / rv["Volume"].shift(1)
-    r2 = rv["Volume"] / rv["Volume"].shift(2)
-    return ((r1 >= VOL_RATIO_THRESHOLD) | (r2 >= VOL_RATIO_THRESHOLD)).iloc[2:].any()
-
-def ma(series, n): return series.rolling(n).mean()
-
-def ichimoku_calc(df, n):
-    return (df["High"].rolling(n).max() + df["Low"].rolling(n).min()) / 2
-
-def check_all_conditions(df):
-    if len(df) < 260: return False
-    
-    # A) 거래대금
-    turnover20 = (df.tail(20)["Close"] * df.tail(20)["Volume"]).max()
-    last_turnover = df.iloc[-1]["Close"] * df.iloc[-1]["Volume"]
-    if turnover20 < TURNOVER_MAX_20_THRESHOLD or last_turnover < LAST_TURNOVER_THRESHOLD:
-        return False
-
-    # B) 거래량 스파이크
-    if not has_vol_spike(df): return False
-
-    # C) 이평선 정배열 & 종가 위치
-    c = df["Close"]
-    ma5, ma20, ma60 = ma(c, 5), ma(c, 20), ma(c, 60)
-    ma120, ma240 = ma(c, 120), ma(c, 240)
-    if not (ma5.iloc[-1] > ma20.iloc[-1] > ma60.iloc[-1]) or not (c.iloc[-1] > ma5.iloc[-1]):
-        return False
-
-    # D) 장기선 기울기
-    lb = SLOPE_LOOKBACK_DAYS
-    if not (ma120.iloc[-1] > ma120.iloc[-(lb+1)] and ma240.iloc[-1] > ma240.iloc[-(lb+1)]):
-        return False
-
-    # E) 120일 신고가 근접
-    if df["Close"].tail(20).max() < df["Close"].tail(120).max():
-        return False
-
-    # F) 일목균형표 조건
-    tenkan = ichimoku_calc(df, ICHIMOKU_TENKAN)
-    kijun  = ichimoku_calc(df, ICHIMOKU_KIJUN)
-    if pd.isna(tenkan.iloc[-1]) or pd.isna(kijun.iloc[-1]): return False
-    if not (tenkan.iloc[-1] > kijun.iloc[-1]) or not (c.iloc[-1] > tenkan.iloc[-1]):
-        return False
-
-    return True
-
-# =========================
-# 4. 메인 실행부
-# =========================
-def main():
-    start_time = time.time()
-    listing = get_listing()
-    print(f"[INFO] 대상 종목 수: {len(listing)} | 스캔 시작...")
-
-    results = []
-    for i, row in listing.iterrows():
-        code, name, market = row["Code"], row["Name"], row["Market"]
-        df = get_ohlcv_retry(code, FULL_COUNT, RETRY_FULL)
+def extract_ml_features(df, market_df, investor_df=None):
+    """
+    [통합 고도화 엔진] 
+    1. 타겟: 선정일 종가 대비 다음날 '또는' 다다음날 종가 상승 여부 (T+1 or T+2)
+    2. 글로벌 퀀트 피처: 변동성 보정 수익률 및 시장 알파
+    3. 현대차 패턴: 120일 에너지 갱신 및 3일선 이격 리스크
+    """
+    try:
+        if len(df) < 320: return None
         
-        if df is not None and check_all_conditions(df):
-            turnover20 = to_eok((df.tail(20)["Close"] * df.tail(20)["Volume"]).max())
-            last_turnover = to_eok(df.iloc[-1]["Close"] * df.iloc[-1]["Volume"])
+        # --- [A. 지표 및 속성 계산] ---
+        df['ma3'] = ta.sma(df['Close'], 3)
+        df['ma5'] = ta.sma(df['Close'], 5)
+        df['ma20'] = ta.sma(df['Close'], 20)
+        df['trade_value'] = df['Close'] * df['Volume']
+        df['rsi'] = ta.rsi(df['Close'], 14)
+        
+        df['body'] = abs(df['Close'] - df['Open'])
+        df['range'] = df['High'] - df['Low'] + 1e-9
+        df['up_shadow'] = (df['High'] - df[['Open', 'Close']].max(axis=1)) / df['range']
+        df['is_bull'] = (df['Close'] > df['Open']).astype(int)
+        
+        # 일목균형표
+        conv = (df['High'].rolling(9).max() + df['Low'].rolling(9).min()) / 2
+        base = (df['High'].rolling(26).max() + df['Low'].rolling(26).min()) / 2
+        
+        # 수급 통합
+        if investor_df is not None:
+            df = df.join(investor_df, how='left').fillna(0)
+
+        # --- [B. 임찬희의 7가지 절대 선정 필터] ---
+        cond1 = (df['trade_value'].rolling(20).max() >= 100_000_000_000) & (df['trade_value'] >= 5_000_000_000)
+        cond2 = (df['Volume'] >= df['Volume'].shift(1) * 5) | (df['Volume'] >= df['Volume'].shift(2) * 5)
+        cond3 = (df['ma5'] > df['ma20']) & (df['Close'] > df['ma5'])
+        cond4 = (ta.sma(df['Close'], 120) > ta.sma(df['Close'], 120).shift(5))
+        cond5 = (df['Close'].rolling(20).max() >= df['Close'].rolling(120).max())
+        cond6 = (conv > base) & (df['Close'] > conv)
+        
+        is_setup_day = cond1 & cond2 & cond3 & cond4 & cond5 & cond6
+        
+        # --- [C. 패턴 및 타겟 분석 루프] ---
+        processed_list = []
+        setup_indices = df.index[is_setup_day]
+        
+        for idx in setup_indices:
+            pos = df.index.get_loc(idx)
+            # [수정] 다다음날(T+2)까지 봐야 하므로 pos + 2 범위를 체크
+            if pos < 120 or pos + 2 >= len(df): continue
             
-            results.append({
-                "종목코드": code, "종목명": name, "시장": market,
-                "최근20일최대거래대금(억)": turnover20,
-                "최근거래일거래대금(억)": last_turnover
-            })
+            win_hist = df.iloc[pos-120 : pos-20]
+            win_recent = df.iloc[pos-19 : pos+1]
+            row_data = df.loc[idx].copy()
+            
+            # 1. 변동성 보정 수익률 (Risk-Adjusted Return)
+            volat = win_recent['Close'].pct_change().std() + 1e-9
+            ret = (win_recent['Close'].iloc[-1] - win_recent['Close'].iloc[0]) / (win_recent['Close'].iloc[0] + 1e-9)
+            row_data['vol_scaled_ret'] = ret / volat
+            
+            # 2. [현대차 패턴] 에너지 갱신 (120일 거래량 돌파)
+            row_data['energy_refresh_ratio'] = win_recent['Volume'].max() / (win_hist['Volume'].max() + 1e-9)
+            
+            # 3. [이격 리스크] 3일선 이격 vs 몸통
+            ma3_dist = abs(row_data['Close'] - row_data['ma3'])
+            row_data['ma3_body_risk'] = ma3_dist / (row_data['body'] + 1e-9)
+            
+            # 4. 수급 및 상대 강도
+            if '외국인순매수' in df.columns:
+                row_data['foreign_energy'] = win_recent['외국인순매수'].sum() / (win_recent['trade_value'].sum() + 1e-9)
+                row_data['inst_energy'] = win_recent['기관순매수'].sum() / (win_recent['trade_value'].sum() + 1e-9)
+            
+            mkt_pos = market_df.index.get_loc(idx)
+            mkt_ret = (market_df.iloc[mkt_pos] - market_df.iloc[mkt_pos-19]) / (market_df.iloc[mkt_pos-19] + 1e-9)
+            row_data['market_alpha'] = ret - mkt_ret
 
-        if (i + 1) % 100 == 0:
-            print(f"[PROGRESS] {i+1}/{len(listing)} 완료 | 포착: {len(results)}개")
-        time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
+            # 5. [핵심 수정] 타겟 설정: 내일 종가 '또는' 다다음날 종가가 오늘보다 높은지
+            next_1_close = df.iloc[pos+1]['Close']
+            next_2_close = df.iloc[pos+2]['Close']
+            row_data['target'] = 1 if (next_1_close > row_data['Close'] or next_2_close > row_data['Close']) else 0
+            
+            processed_list.append(row_data)
+            
+        return pd.DataFrame(processed_list).dropna() if processed_list else None
+    except Exception as e:
+        print(f"Error: {e}"); return None
 
-    if results:
-        out = pd.DataFrame(results).sort_values("최근거래일거래대금(억)", ascending=False).reset_index(drop=True)
-        path = os.path.join(OUT_DIR, f"final_result_{today_yyyymmdd()}.csv")
-        out.to_csv(path, index=False, encoding="utf-8-sig")
-        print(f"\n[DONE] {len(out)}개 종목 포착 완료: {path}")
-    else:
-        print("\n[RESULT] 포착된 종목이 없습니다.")
+def train_specialized_model():
+    study_list = get_latest_selected_stocks()
+    if not study_list: return
+
+    print(f"🚀 [타겟 최적화] 다음날/다다음날 상승 확률 통합 학습 시작")
     
-    print(f"[INFO] 소요 시간: {round((time.time() - start_time)/60, 1)}분")
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365 * (TRAIN_YEARS + 2))
+    
+    kospi = yf.download("^KS11", start=start_date, end=end_date, progress=False)['Close']
+    kosdaq = yf.download("^KQ11", start=start_date, end=end_date, progress=False)['Close']
+    if isinstance(kospi, pd.DataFrame): kospi = kospi.iloc[:, 0]
+    if isinstance(kosdaq, pd.DataFrame): kosdaq = kosdaq.iloc[:, 0]
+
+    all_data = []
+    feature_cols = [
+        'vol_scaled_ret', 'energy_refresh_ratio', 'ma3_body_risk', 
+        'market_alpha', 'foreign_energy', 'inst_energy'
+    ]
+    
+    for code in study_list:
+        try:
+            df = yf.download(f"{code}.KS" if int(code) < 900000 else f"{code}.KQ", start=start_date, end=end_date, progress=False)
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            
+            inv_data = stock.get_market_net_purchases_of_equities_by_ticker(start_date.strftime("%Y%m%d"), end_date.strftime("%Y%m%d"), code)
+            investor_df = inv_data[['외국인', '기관합계']].rename(columns={'외국인': '외국인순매수', '기관합계': '기관순매수'})
+            investor_df.index = pd.to_datetime(investor_df.index)
+
+            target_market = kospi if int(code) < 900000 else kosdaq
+            processed_df = extract_ml_features(df, target_market, investor_df)
+            if processed_df is not None:
+                all_data.append(processed_df[feature_cols + ['target']])
+        except: continue
+
+    if not all_data:
+        print("❌ 유효 데이터 수집 실패."); return
+
+    train_set = pd.concat(all_data)
+    X, y = train_set[feature_cols], train_set['target']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    model = LGBMClassifier(n_estimators=3000, learning_rate=0.002, max_depth=12, num_leaves=127, random_state=42, verbosity=-1)
+    model.fit(X_train, y_train)
+    
+    importances = pd.Series(model.feature_importances_, index=feature_cols).sort_values(ascending=False)
+    print("\n🧐 [타겟 확장 진단] 피처 기여도 분석:")
+    print(importances)
+    
+    acc = accuracy_score(y_test, model.predict(X_test))
+    print(f"\n🎯 [최종 검증] 2거래일 상승 예측 정확도: {round(acc * 100, 2)}%")
+    
+    model.fit(X, y)
+    joblib.dump(model, MODEL_NAME)
+    print(f"✅ 2일간의 상승 기회를 포착하는 AI 두뇌 저장 완료")
 
 if __name__ == "__main__":
-    main()
+    train_specialized_model()

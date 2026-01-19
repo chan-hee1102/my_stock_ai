@@ -1,0 +1,5 @@
+﻿date,accuracy,feature_count,features
+2026-01-19 09:56:54,54.95,14,"rsi, bb_per, ma_diff, vol_consecutive_days, vol_spike_ratio, candle_body, relative_strength, macd_hist, mfi, atr_ratio, stoch_k, disparity_60, price_range, vol_roc"
+2026-01-19 10:02:03,58.69,15,"rsi, bb_per, ma_diff, vol_consecutive_days, vol_spike_ratio, candle_body, relative_strength, macd_hist, mfi, atr_ratio, stoch_k, disparity_60, price_range, vol_roc, nasdaq_return"
+2026-01-19 10:21:08,62.76,17,"rsi, bb_per, ma_diff, vol_consecutive_days, vol_spike_ratio, candle_body, relative_strength, macd_hist, mfi, atr_ratio, stoch_k, disparity_60, price_range, vol_roc, nasdaq_return, vix_close, dxy_return"
+2026-01-19 10:26:05,64.58,20,"rsi, bb_per, ma_diff, vol_consecutive_days, vol_spike_ratio, candle_body, relative_strength, macd_hist, mfi, atr_ratio, stoch_k, disparity_60, price_range, vol_roc, day_of_week, nasdaq_return, vix_close, dxy_return, tnx_close, gold_return"

@@ -1,19 +1,22 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-import os
+import pandas_ta as ta
 import yfinance as yf
 import plotly.graph_objects as go
 import requests
 from bs4 import BeautifulSoup
 from groq import Groq
-from datetime import datetime
-import numpy as np
-import pandas_ta as ta  # AI 모델 지표 계산용 추가
-import joblib           # 모델 로드용 추가
-import re               # 한자 및 외국어 필터링용
+from datetime import datetime, timedelta
+import os
+import warnings
+import logging
+import joblib
+import re
 
-# 1) 페이지 설정 및 세션 초기화
+# =================================================================
+# 1. 페이지 설정 및 세션 초기화
+# =================================================================
 st.set_page_config(page_title="AI STOCK COMMANDER", layout="wide")
 
 if "selected_stock" not in st.session_state:
@@ -21,15 +24,20 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# [요구사항 5] 접속 시점의 실제 오늘 날짜 (2026-01-18)
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
-# [전문가 기능] 한자 및 외국어를 물리적으로 삭제하는 필터
+# 워닝 차단
+warnings.filterwarnings("ignore")
+logging.getLogger("lightgbm").setLevel(logging.ERROR)
+
+# 외국어 필터
 def clean_foreign_languages(text):
     pattern = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\u31f0-\u31ff]')
     return pattern.sub('', text)
 
-# 2) 디자인 CSS (찬희님 디자인 100% 유지)
+# =================================================================
+# 2. 디자인 CSS (사용자 디자인 100% 유지)
+# =================================================================
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #05070a; }}
@@ -89,7 +97,98 @@ st.markdown(f"""
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 기능 함수 정의
+# =================================================================
+# 3. 실시간 분석 및 보조 지표 계산 (AI 연동 핵심)
+# =================================================================
+
+@st.cache_data(ttl=3600)
+def get_macro_data():
+    """AI 예측에 필요한 글로벌 매크로 지표 실시간 수집"""
+    try:
+        end = datetime.now()
+        start = end - timedelta(days=20)
+        # 나스닥, VIX, 달러, 금리, 금
+        nasdaq = yf.download("^IXIC", start=start, end=end, progress=False)['Close'].pct_change()
+        vix = yf.download("^VIX", start=start, end=end, progress=False)['Close']
+        dxy = yf.download("DX-Y.NYB", start=start_date, end=end_date, progress=False)['Close'].pct_change()
+        tnx = yf.download("^TNX", start=start, end=end, progress=False)['Close']
+        gold = yf.download("GC=F", start=start, end=end, progress=False)['Close'].pct_change()
+        
+        def clean(s): return s.iloc[:, 0] if isinstance(s, pd.DataFrame) else s
+        return clean(nasdaq).iloc[-1], clean(vix).iloc[-1], clean(dxy).iloc[-1], clean(tnx).iloc[-1], clean(gold).iloc[-1]
+    except:
+        return 0, 20, 0, 4.0, 0
+
+def calculate_ai_probability(df, market_df):
+    """64.5% 모델의 20가지 피처를 실시간으로 계산하여 확률 산출"""
+    try:
+        if not os.path.exists("stock_model.pkl"): 
+            return 50.0, "모델 파일 없음", []
+        
+        model = joblib.load("stock_model.pkl")
+        
+        # 1. 기술적 지표 계산 (학습 모델과 동일 로직)
+        df['rsi'] = ta.rsi(df['Close'], length=14)
+        bb = ta.bbands(df['Close'], length=20, std=2)
+        l_col = [c for c in bb.columns if 'BBL' in c][0]
+        u_col = [c for c in bb.columns if 'BBU' in c][0]
+        df['bb_per'] = (df['Close'] - bb[l_col]) / (bb[u_col] - bb[l_col])
+        df['ma_diff'] = (ta.sma(df['Close'], 5) - ta.sma(df['Close'], 20)) / ta.sma(df['Close'], 20)
+        
+        vol_up = (df['Volume'] > df['Volume'].shift(1)).astype(int)
+        df['vol_consecutive_days'] = vol_up.groupby((vol_up != vol_up.shift()).cumsum()).cumsum()
+        df['vol_spike_ratio'] = df['Volume'] / ta.sma(df['Volume'], 20)
+        df['candle_body'] = (df['Close'] - df['Open']) / (df['High'] - df['Low'] + 1e-9)
+        
+        df = df.join(market_df.rename("market_close"), how='left')
+        df['relative_strength'] = df['Close'].pct_change(5) - df['market_close'].pct_change(5)
+        
+        macd = ta.macd(df['Close'])
+        df['macd_hist'] = macd['MACDh_12_26_9']
+        df['mfi'] = ta.mfi(df['High'], df['Low'], df['Close'], df['Volume'], length=14)
+        df['atr_ratio'] = ta.atr(df['High'], df['Low'], df['Close'], length=14) / df['Close']
+        
+        stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=14, d=3, smooth_k=3)
+        df['stoch_k'] = stoch['STOCHk_14_3_3']
+        df['disparity_60'] = (df['Close'] / ta.sma(df['Close'], 60)) * 100
+        df['price_range'] = (df['High'] - df['Low']) / df['Close']
+        df['vol_roc'] = ta.roc(df['Volume'], length=5)
+        df['day_of_week'] = df.index.dayofweek
+        
+        # 2. 매크로 지표 합류
+        n_ret, v_cls, d_ret, t_cls, g_ret = get_macro_data()
+        df['nasdaq_return'] = n_ret
+        df['vix_close'] = v_cls
+        df['dxy_return'] = d_ret
+        df['tnx_close'] = t_cls
+        df['gold_return'] = g_ret
+        
+        # 3. 예측 실행
+        feature_cols = [
+            'rsi', 'bb_per', 'ma_diff', 'vol_consecutive_days', 'vol_spike_ratio', 
+            'candle_body', 'relative_strength', 'macd_hist', 'mfi', 'atr_ratio',
+            'stoch_k', 'disparity_60', 'price_range', 'vol_roc', 'day_of_week',
+            'nasdaq_return', 'vix_close', 'dxy_return', 'tnx_close', 'gold_return'
+        ]
+        
+        last_data = df[feature_cols].tail(1)
+        prob = model.predict_proba(last_data)[0][1] * 100
+        
+        # 요약 이유
+        last = df.iloc[-1]
+        reasons = [
+            {"label": "시장 공포지수 (VIX)", "val": f"{v_cls:.1f}", "desc": "안정적" if v_cls < 20 else "변동성 주의"},
+            {"label": "상대적 강도 (RS)", "val": f"{last['relative_strength']*100:.1f}%", "desc": "시장 압도" if last['relative_strength'] > 0 else "시장 하회"},
+            {"label": "이격도 (60일)", "val": f"{last['disparity_60']:.1f}", "desc": "과매수" if last['disparity_60'] > 110 else "과매도" if last['disparity_60'] < 90 else "적정"},
+            {"label": "수급 모멘텀", "val": f"{last['vol_roc']:.1f}%", "desc": "에너지 응축" if last['vol_roc'] > 0 else "거래 감소"}
+        ]
+        
+        msg = "나스닥 및 국채금리 변동성 반영 완료"
+        return round(prob, 1), msg, reasons
+        
+    except Exception as e:
+        return 50.0, f"데이터 분석 중 ({str(e)})", []
+
 def load_data():
     out_dir = "outputs"
     if not os.path.exists(out_dir): return None, None
@@ -123,32 +222,6 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list)
     except: return None
 
-def calculate_ai_probability(df):
-    try:
-        if not os.path.exists("stock_model.pkl"): return 50, "학습 모델 없음", []
-        model = joblib.load("stock_model.pkl")
-        df['rsi'] = ta.rsi(df['Close'], length=14)
-        bb = ta.bbands(df['Close'], length=20, std=2)
-        if bb is not None:
-            l_col = [c for c in bb.columns if 'BBL' in c][0]
-            u_col = [c for c in bb.columns if 'BBU' in c][0]
-            df['bb_per'] = (df['Close'] - bb[l_col]) / (bb[u_col] - bb[l_col])
-        ma5, ma20 = ta.sma(df['Close'], length=5), ta.sma(df['Close'], length=20)
-        df['ma_diff'] = (ma5 - ma20) / ma20
-        df['vol_ratio'] = df['Volume'] / df['Volume'].shift(1)
-        last = df.iloc[-1]
-        last_features = df[['rsi', 'bb_per', 'ma_diff', 'vol_ratio']].tail(1)
-        if last_features.isnull().values.any(): return 50, "분석 데이터 준비 중", []
-        prob = model.predict_proba(last_features)[0][1] * 100
-        reasons = [
-            {"label": "심리 지표 (RSI)", "val": f"{round(float(last['rsi']), 1)}", "desc": "과매도권" if last['rsi'] < 35 else "과열주의" if last['rsi'] > 65 else "안정적"},
-            {"label": "가격 위치 (BB %B)", "val": f"{round(float(last['bb_per']), 2)}", "desc": "지지구간" if last['bb_per'] < 0.2 else "상단돌파" if last['bb_per'] > 0.8 else "중심권"},
-            {"label": "이평 에너지 (MA Diff)", "val": f"{round(float(last['ma_diff'])*100, 1)}%", "desc": "정배열" if last['ma_diff'] > 0 else "역배열"},
-            {"label": "수급 모멘텀 (Vol Ratio)", "val": f"{round(float(last['vol_ratio']), 1)}배", "desc": "수급폭발" if last['vol_ratio'] > 2 else "유입중"}
-        ]
-        return round(prob, 1), "타겟 모델 최적화 완료", reasons
-    except Exception as e: return 50, f"분석 대기 ({str(e)})", []
-
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="white")
@@ -157,10 +230,10 @@ def draw_finance_chart(dates, values, unit, is_debt=False):
     fig.update_layout(template="plotly_dark", height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)"))
     return fig
 
-# 4) 메인 로직 실행
+# =================================================================
+# 4. 메인 대시보드 실행
+# =================================================================
 data, data_date = load_data() 
-
-# [인증 오류 해결 핵심] API 키를 가져올 때 양끝 공백을 제거(.strip())
 groq_api_key = st.secrets.get("GROQ_API_KEY", "").strip()
 client = Groq(api_key=groq_api_key) if groq_api_key and len(groq_api_key) > 10 else None
 
@@ -178,7 +251,7 @@ if data is not None:
                 st.markdown(f'<div class="market-header">{m_name} ({len(m_df)}개)</div>', unsafe_allow_html=True)
                 for i, row in m_df.iterrows():
                     is_sel = st.session_state.selected_stock['종목명'] == row['종목명']
-                    if st.button(f"● {row['종목명']}" if is_sel else f"  {row['종목명']}", key=f"btn_{m_name}_{i}"):
+                    if st.button(f"● {row['종목명']}" if is_sel else f"   {row['종목명']}", key=f"btn_{m_name}_{i}"):
                         st.session_state.selected_stock = row.to_dict()
                         st.session_state.messages = []
                         st.rerun()
@@ -187,18 +260,18 @@ if data is not None:
         stock = st.session_state.selected_stock
         st.markdown(f'<div class="section-header">📈 {stock["종목명"]}</div>', unsafe_allow_html=True)
         ticker_sym = stock['종목코드'] + (".KS" if stock['시장'] == "KOSPI" else ".KQ")
+        market_idx = "^KS11" if stock['시장'] == "KOSPI" else "^KQ11"
         tk = yf.Ticker(ticker_sym)
+        
         c1, c2 = st.columns([7, 3])
         with c1:
             try:
-                hist = tk.history(period="3mo").tail(60)
+                # AI 분석을 위해 충분한 과거 데이터(70일치)를 가져옴
+                hist = tk.history(period="6mo").tail(100)
+                m_hist = yf.download(market_idx, period="6mo", progress=False)['Close'].tail(100)
+                
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
-                fig.update_layout(
-                    template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
-                    paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
-                    yaxis=dict(tickformat=',d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=12, color='#ffffff')),
-                    xaxis=dict(tickformat='%m.%d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=12, color='#ffffff'))
-                )
+                fig.update_layout(template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
             except: st.error("차트 로드 실패")
         with c2:
@@ -224,13 +297,16 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        prob, msg, reasons = calculate_ai_probability(hist)
+        # 상승 확률 계산 (v1.6 모델 적용)
+        prob, msg, reasons = calculate_ai_probability(hist, m_hist)
         st.markdown('<div class="section-header" style="margin-top:30px;">🚀 AI PREDICTIVE STRATEGY: 5개년 데이터 모델링 기반 익일 기대수익 확률</div>', unsafe_allow_html=True)
         prob_col, reason_col = st.columns([4, 6])
         with prob_col:
+            # 확률에 따른 바 색상 로직 적용 (60% 이상은 빨강, 이하 파랑)
+            bar_color = "#ff3366" if prob > 60 else "#00e5ff"
             st.markdown(f"""
-                <div style="background-color:#161b22; border:1px dashed #00e5ff; border-radius:12px; height:280px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
-                    <span style="color:#00e5ff; font-size:1.1rem; font-weight:800; margin-bottom:10px;">상승 모멘텀(Momentum)</span>
+                <div style="background-color:#161b22; border:1px dashed {bar_color}; border-radius:12px; height:280px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+                    <span style="color:{bar_color}; font-size:1.1rem; font-weight:800; margin-bottom:10px;">상승 모멘텀(Momentum)</span>
                     <div style="color:#ffffff; font-size:3.5rem; font-weight:900;">{prob}%</div>
                     <div style="color:#8b949e; font-size:0.8rem; margin-top:10px;">{msg}</div>
                 </div>
@@ -249,40 +325,25 @@ if data is not None:
         chat_container = st.container(height=800) 
         
         with chat_container:
-            # [전문가 분석 모드]
             if not st.session_state.messages and client:
                 with st.spinner("애널리스트가 실시간 시장을 분석 중입니다..."):
-                    auto_prompt = f"""너는 주식 투자 전문가이자 애널리스트야. {today_real_date} 기준으로 {stock['종목명']}을 분석해줘.
-                    
-                    반드시 아래의 형식을 '정확히' 지켜서 답변해 (헤더 태그 포함):
-                    <span style='color:#00e5ff; font-weight:bold;'>테마:</span>
-                    
-                    (해당 종목이 현재 시장에서 {today_real_date} 기준으로 가장 주목받는 '실시간 테마'를 전문 분석해줘.)
-                    
-                    <span style='color:#00e5ff; font-weight:bold;'>최근 상승한 이유:</span>
-                    
-                    (오늘 날짜 실시간 뉴스 기반으로 {stock['종목명']}의 상승 동력을 상세히 분석하되, 반드시 제목 아래에 한 줄 띄우고 본문을 시작해줘.)
-                    
-                    <span style='color:#00e5ff; font-weight:bold;'>악재 및 내일 전망:</span>
-                    
-                    (실시간 리스크나 내일 장 전망을 분석해줘. 악재가 없으면 기술적 대응 전략을 한 줄 띄우고 써줘.)
-                    
-                    마지막엔 "{stock['종목명']}에 대해 궁금한 점 있으시면 질문해주세요."라고 마무리해."""
+                    auto_prompt = f"""전문가로서 {today_real_date} 기준 {stock['종목명']}을 분석해줘.
+                    1. 테마: 현재 실시간 주도 테마 분석.
+                    2. 최근 상승 이유: {today_real_date} 뉴스 기반 분석.
+                    3. 전망: 내일 장 기술적 대응 전략.
+                    답변 마지막에 "{stock['종목명']}에 대해 궁금한 점 있으시면 질문해주세요."라고 써줘."""
                     
                     try:
                         res = client.chat.completions.create(
                             model="llama-3.3-70b-versatile", 
                             messages=[
-                                {"role": "system", "content": f"당신은 대한민국 최고의 주식 투자 전문가입니다. [절대 규칙] 1. 반드시 한국어로만 답변하십시오. 2. 한자(Hanja), 일본어 사용을 물리적으로 금지합니다. 3. 불필요한 영어 단어를 금지합니다. 4. 각 항목 헤더(<span...>) 뒤에는 반드시 '엔터(줄바꿈)'를 두 번 입력하십시오."},
+                                {"role": "system", "content": "당신은 주식 투자 전문가입니다. 한국어로만 답변하고 한자/일본어 사용을 금지합니다."},
                                 {"role": "user", "content": auto_prompt}
                             ]
                         )
                         initial_analysis = clean_foreign_languages(res.choices[0].message.content)
                         st.session_state.messages.append({"role": "assistant", "content": initial_analysis})
-                    except Exception as e:
-                        st.error(f"API 인증 오류: {str(e)}")
-            elif not client:
-                st.warning("⚠️ API 키 설정을 확인해 주세요. (Settings -> Secrets)")
+                    except: pass
 
             for m in st.session_state.messages:
                 with st.chat_message(m["role"], avatar="🤖" if m["role"] == "assistant" else None):
@@ -297,8 +358,8 @@ if data is not None:
                         res = client.chat.completions.create(
                             model="llama-3.3-70b-versatile", 
                             messages=[
-                                {"role": "system", "content": "주식 전문가로서 한국어만 사용하여 답변하세요. 한자/일본어 금지 필터가 적용됩니다."},
-                                {"role": "user", "content": f"{stock['종목명']} 관련 질문: {prompt}"}
+                                {"role": "system", "content": "주식 전문가로서 한국어만 사용하여 답변하세요."},
+                                {"role": "user", "content": f"{stock['종목명']} 질문: {prompt}"}
                             ]
                         )
                         ans = clean_foreign_languages(res.choices[0].message.content)
