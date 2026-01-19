@@ -23,7 +23,7 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# [요구사항] 접속 시점의 실제 오늘 날짜 (2026-01-19)
+# 접속 시점의 실제 오늘 날짜 (2026-01-19)
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
 # 워닝 차단 및 로그 제어
@@ -35,7 +35,7 @@ def clean_foreign_languages(text):
     pattern = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\u31f0-\u31ff]')
     return pattern.sub('', text)
 
-# 2) 디자인 CSS (찬희님 디자인 100% 유지)
+# 2) 디자인 CSS (사용자 디자인 100% 유지)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #05070a; }}
@@ -129,15 +129,15 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list)
     except: return None
 
-# [v1.7 정밀화] 실시간 매크로 데이터 수집 엔진 (에러 방지용 ffill 적용)
+# [v1.7 정밀화] 실시간 매크로 데이터 수집 엔진
 @st.cache_data(ttl=3600)
 def get_macro_data():
     try:
         end = datetime.now()
         start = end - timedelta(days=30)
         tickers = ["^IXIC", "^VIX", "DX-Y.NYB", "^TNX", "GC=F", "NQ=F"]
-        macro = yf.download(tickers, start=start, end=end, progress=False)['Close']
-        macro = macro.ffill()
+        # 멀티인덱스 방지를 위해 별도 처리
+        macro = yf.download(tickers, start=start, end=end, progress=False)['Close'].ffill()
         
         last = macro.iloc[-1]
         n_ret = macro["^IXIC"].pct_change().iloc[-1]
@@ -149,13 +149,13 @@ def get_macro_data():
         return n_ret, v_cls, d_ret, t_cls, g_ret, nf_ret
     except: return 0.0, 15.0, 0.0, 4.0, 0.0, 0.0
 
-# [수리 완료] v1.7 65.25% 모델 22개 피처 실시간 연산 (50% 고정 문제 해결)
+# [수리 완료] v1.7 65.25% 모델 22개 피처 연산 (str object is not callable 해결)
 def calculate_ai_probability(df, market_df):
     try:
         if not os.path.exists("stock_model.pkl"): return 50.0, "모델 파일 미발견", []
         model = joblib.load("stock_model.pkl")
         
-        # 1. 기술적 지표 생성 (훈련 시 사용된 v1.7 로직과 100% 동일)
+        # 1. 기술적 지표 생성 (v1.7 로직 완벽 재현)
         df['rsi'] = ta.rsi(df['Close'], length=14)
         bb = ta.bbands(df['Close'], length=20, std=2)
         l_col, u_col = [c for c in bb.columns if 'BBL' in c][0], [c for c in bb.columns if 'BBU' in c][0]
@@ -166,8 +166,12 @@ def calculate_ai_probability(df, market_df):
         df['vol_spike_ratio'] = df['Volume'] / ta.sma(df['Volume'], 20)
         df['candle_body'] = (df['Close'] - df['Open']) / (df['High'] - df['Low'] + 1e-9)
         
-        # 시장 대비 상대 강도 결합 (인덱스 맞춤)
-        df = df.join(market_df.rename("market_close"), how='left').ffill()
+        # [에러 해결 핵심] market_df를 Series로 변환하여 rename 에러 방지
+        m_series = market_df.squeeze()
+        if isinstance(m_series, pd.DataFrame): m_series = m_series.iloc[:, 0]
+        m_series.name = "market_close"
+        
+        df = df.join(m_series, how='left').ffill()
         df['relative_strength'] = df['Close'].pct_change(5) - df['market_close'].pct_change(5)
         
         df['macd_hist'] = ta.macd(df['Close'])['MACDh_12_26_9']
@@ -177,15 +181,15 @@ def calculate_ai_probability(df, market_df):
         df['disparity_60'] = (df['Close'] / ta.sma(df['Close'], 60)) * 100
         df['price_range'] = (df['High'] - df['Low']) / df['Close']
         df['vol_roc'] = ta.roc(df['Volume'], length=5)
-        df['range_roc'] = ta.roc(df['price_range'], length=5) # v1.7 신규
+        df['range_roc'] = ta.roc(df['price_range'], length=5) 
         df['day_of_week'] = df.index.dayofweek
         
-        # 2. 실시간 매크로 데이터 병합
+        # 2. 매크로 데이터 병합
         n_ret, v_cls, d_ret, t_cls, g_ret, nf_ret = get_macro_data()
         df['nasdaq_return'], df['vix_close'], df['dxy_return'] = n_ret, v_cls, d_ret
         df['tnx_close'], df['gold_return'], df['nasdaq_f_return'] = t_cls, g_ret, nf_ret
         
-        # 3. 모델이 요구하는 정확한 22가지 피처 정렬
+        # 3. 22개 피처 정렬 및 예측
         feature_cols = [
             'rsi', 'bb_per', 'ma_diff', 'vol_consecutive_days', 'vol_spike_ratio', 
             'candle_body', 'relative_strength', 'macd_hist', 'mfi', 'atr_ratio',
@@ -194,20 +198,18 @@ def calculate_ai_probability(df, market_df):
             'gold_return', 'nasdaq_f_return'
         ]
         
-        last_features = df[feature_cols].tail(1).fillna(0) # 결측치 처리로 예측 실패 방지
-        
-        # 65.25% 실력의 실제 확률 산출
+        last_features = df[feature_cols].tail(1).fillna(0)
         prob = model.predict_proba(last_features)[0][1] * 100
         last = df.iloc[-1]
         
         reasons = [
-            {"label": "상대강도 (RS)", "val": f"{round(float(last['relative_strength'])*100, 1)}%", "desc": "시장 압도" if last['relative_strength'] > 0 else "하회"},
-            {"label": "나스닥 선물", "val": f"{nf_ret*100:.2f}%", "desc": "실시간 호조" if nf_ret > 0 else "약세"},
-            {"label": "에너지 가속도", "val": f"{round(float(last['range_roc']), 1)}%", "desc": "가속화" if last['range_roc'] > 0 else "수렴"},
+            {"label": "상대강도 (RS)", "val": f"{round(float(last['relative_strength'])*100, 1)}%", "desc": "시장 주도" if last['relative_strength'] > 0 else "하회"},
+            {"label": "나스닥 선물", "val": f"{nf_ret*100:.2f}%", "desc": "호조" if nf_ret > 0 else "불안"},
+            {"label": "에너지 가속도", "val": f"{round(float(last['range_roc']), 1)}%", "desc": "폭발적" if last['range_roc'] > 0 else "수렴"},
             {"label": "VIX 공포지수", "val": f"{v_cls:.1f}", "desc": "안정" if v_cls < 18 else "주의"}
         ]
-        return round(prob, 1), "v1.7 정밀 분석 엔진 가동 중", reasons
-    except Exception as e: return 50.0, f"엔진 점검 중 ({str(e)})", []
+        return round(prob, 1), "v1.7 분석 엔진 정상 작동 중", reasons
+    except Exception as e: return 50.0, f"분석 대기 중 ({str(e)})", []
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
     fig = go.Figure()
@@ -250,16 +252,20 @@ if data is not None:
         c1, c2 = st.columns([7, 3])
         with c1:
             try:
-                hist = tk.history(period="6mo").tail(100)
-                m_hist = yf.download(market_idx, period="6mo", progress=False)['Close'].tail(100)
+                hist = tk.history(period="6mo")
+                # MultiIndex 수동 플래닝 (최신 yfinance 대응)
+                if isinstance(hist.columns, pd.MultiIndex): hist.columns = hist.columns.get_level_values(0)
+                
+                m_hist = yf.download(market_idx, period="6mo", progress=False)['Close']
+                
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 
-                # [디자인 완벽 고정] 격자선 투명도 0.05, 날짜 숫자(01.19), 가격 콤마 표기
+                # [디자인 완벽 고정] 흰 격자선 흐리게(0.05), 날짜 숫자(01.19), 가격 콤마 표기
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
-                    xaxis=dict(tickformat='%m.%d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=12, color='#ffffff')),
-                    yaxis=dict(tickformat=',d', gridcolor='rgba(255,255,255,0.05)', tickfont=dict(size=12, color='#ffffff'))
+                    xaxis=dict(tickformat='%m.%d', gridcolor='rgba(255,255,255,0.05)', showgrid=True, tickfont=dict(size=12, color='#ffffff')),
+                    yaxis=dict(tickformat=',d', gridcolor='rgba(255,255,255,0.05)', showgrid=True, tickfont=dict(size=12, color='#ffffff'))
                 )
                 st.plotly_chart(fig, use_container_width=True)
             except: st.error("차트 데이터 로드 실패")
@@ -286,12 +292,11 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # [실전 확률 연동] v1.7 고도화 모델 적용 (50% 고정 문제 해결)
+        # [실전 확률 연동] v1.7 65.25% 모델 적용
         prob, msg, reasons = calculate_ai_probability(hist, m_hist)
         st.markdown('<div class="section-header" style="margin-top:30px;">🚀 AI PREDICTIVE STRATEGY: 5개년 데이터 모델링 기반 익일 기대수익 확률</div>', unsafe_allow_html=True)
         prob_col, reason_col = st.columns([4, 6])
         with prob_col:
-            # 60% 이상이면 강력 주도주 빨간 테두리 강조
             bar_border = "#ff3366" if prob > 60 else "#00e5ff"
             st.markdown(f"""
                 <div style="background-color:#161b22; border:1px dashed {bar_border}; border-radius:12px; height:280px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
@@ -314,8 +319,8 @@ if data is not None:
         chat_container = st.container(height=800)
         with chat_container:
             if not st.session_state.messages and client:
-                with st.spinner("애널리스트 분석 중..."):
-                    auto_prompt = f"전문가로서 {today_real_date} 기준 {stock['종목명']}의 분석과 전략을 설명해줘. 한자 금지."
+                with st.spinner("전문가 분석 중..."):
+                    auto_prompt = f"전문가로서 {today_real_date} 기준 {stock['종목명']}의 전략을 설명해줘. 한자 금지."
                     try:
                         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": auto_prompt}])
                         ans = clean_foreign_languages(res.choices[0].message.content)
