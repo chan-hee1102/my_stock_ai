@@ -23,7 +23,7 @@ if "selected_stock" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 접속 시점의 실제 오늘 날짜 (2026-01-19)
+# [요구사항] 접속 시점의 실제 오늘 날짜 (2026-01-19)
 today_real_date = datetime.now().strftime('%Y-%m-%d')
 
 # 워닝 차단 및 로그 제어
@@ -129,14 +129,15 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list)
     except: return None
 
-# [v1.7 정밀화] 실시간 매크로 지표 확보 (나스닥 선물 포함)
+# [v1.7 정밀화] 실시간 매크로 데이터 수집 엔진 (에러 방지용 ffill 적용)
 @st.cache_data(ttl=3600)
 def get_macro_data():
     try:
         end = datetime.now()
         start = end - timedelta(days=30)
         tickers = ["^IXIC", "^VIX", "DX-Y.NYB", "^TNX", "GC=F", "NQ=F"]
-        macro = yf.download(tickers, start=start, end=end, progress=False)['Close'].ffill()
+        macro = yf.download(tickers, start=start, end=end, progress=False)['Close']
+        macro = macro.ffill()
         
         last = macro.iloc[-1]
         n_ret = macro["^IXIC"].pct_change().iloc[-1]
@@ -148,13 +149,13 @@ def get_macro_data():
         return n_ret, v_cls, d_ret, t_cls, g_ret, nf_ret
     except: return 0.0, 15.0, 0.0, 4.0, 0.0, 0.0
 
-# [수리 완료] v1.7 65.25% 모델 22개 피처 실시간 연산 (50% 고정 문제 완전 해결)
+# [수리 완료] v1.7 65.25% 모델 22개 피처 실시간 연산 (50% 고정 문제 해결)
 def calculate_ai_probability(df, market_df):
     try:
         if not os.path.exists("stock_model.pkl"): return 50.0, "모델 파일 미발견", []
         model = joblib.load("stock_model.pkl")
         
-        # 1. 기술적 지표 생성 (v1.7 로직 100% 재현)
+        # 1. 기술적 지표 생성 (훈련 시 사용된 v1.7 로직과 100% 동일)
         df['rsi'] = ta.rsi(df['Close'], length=14)
         bb = ta.bbands(df['Close'], length=20, std=2)
         l_col, u_col = [c for c in bb.columns if 'BBL' in c][0], [c for c in bb.columns if 'BBU' in c][0]
@@ -165,7 +166,7 @@ def calculate_ai_probability(df, market_df):
         df['vol_spike_ratio'] = df['Volume'] / ta.sma(df['Volume'], 20)
         df['candle_body'] = (df['Close'] - df['Open']) / (df['High'] - df['Low'] + 1e-9)
         
-        # 인덱스 정합성 확보 후 시장 지수 결합
+        # 시장 대비 상대 강도 결합 (인덱스 맞춤)
         df = df.join(market_df.rename("market_close"), how='left').ffill()
         df['relative_strength'] = df['Close'].pct_change(5) - df['market_close'].pct_change(5)
         
@@ -176,7 +177,7 @@ def calculate_ai_probability(df, market_df):
         df['disparity_60'] = (df['Close'] / ta.sma(df['Close'], 60)) * 100
         df['price_range'] = (df['High'] - df['Low']) / df['Close']
         df['vol_roc'] = ta.roc(df['Volume'], length=5)
-        df['range_roc'] = ta.roc(df['price_range'], length=5) # v1.7 신규 핵심 지표
+        df['range_roc'] = ta.roc(df['price_range'], length=5) # v1.7 신규
         df['day_of_week'] = df.index.dayofweek
         
         # 2. 실시간 매크로 데이터 병합
@@ -201,11 +202,11 @@ def calculate_ai_probability(df, market_df):
         
         reasons = [
             {"label": "상대강도 (RS)", "val": f"{round(float(last['relative_strength'])*100, 1)}%", "desc": "시장 압도" if last['relative_strength'] > 0 else "하회"},
-            {"label": "나스닥 선물", "val": f"{nf_ret*100:.2f}%", "desc": "호조" if nf_ret > 0 else "약세"},
-            {"label": "에너지 가속도", "val": f"{round(float(last['range_roc']), 1)}%", "desc": "가속화" if last['range_roc'] > 0 else "응축"},
+            {"label": "나스닥 선물", "val": f"{nf_ret*100:.2f}%", "desc": "실시간 호조" if nf_ret > 0 else "약세"},
+            {"label": "에너지 가속도", "val": f"{round(float(last['range_roc']), 1)}%", "desc": "가속화" if last['range_roc'] > 0 else "수렴"},
             {"label": "VIX 공포지수", "val": f"{v_cls:.1f}", "desc": "안정" if v_cls < 18 else "주의"}
         ]
-        return round(prob, 1), "v1.7 실전 예측 엔진 정상 작동 중", reasons
+        return round(prob, 1), "v1.7 정밀 분석 엔진 가동 중", reasons
     except Exception as e: return 50.0, f"엔진 점검 중 ({str(e)})", []
 
 def draw_finance_chart(dates, values, unit, is_debt=False):
@@ -253,7 +254,7 @@ if data is not None:
                 m_hist = yf.download(market_idx, period="6mo", progress=False)['Close'].tail(100)
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 
-                # [디자인 완벽 고정] 격자선 0.05 투명도, 날짜 숫자(01.19), 가격 콤마 표기
+                # [디자인 완벽 고정] 격자선 투명도 0.05, 날짜 숫자(01.19), 가격 콤마 표기
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
@@ -285,12 +286,12 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # [실전 확률 연동] v1.7 고도화 모델 적용
+        # [실전 확률 연동] v1.7 고도화 모델 적용 (50% 고정 문제 해결)
         prob, msg, reasons = calculate_ai_probability(hist, m_hist)
         st.markdown('<div class="section-header" style="margin-top:30px;">🚀 AI PREDICTIVE STRATEGY: 5개년 데이터 모델링 기반 익일 기대수익 확률</div>', unsafe_allow_html=True)
         prob_col, reason_col = st.columns([4, 6])
         with prob_col:
-            # 60% 이상이면 주도주 빨간 테두리 강조
+            # 60% 이상이면 강력 주도주 빨간 테두리 강조
             bar_border = "#ff3366" if prob > 60 else "#00e5ff"
             st.markdown(f"""
                 <div style="background-color:#161b22; border:1px dashed {bar_border}; border-radius:12px; height:280px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
