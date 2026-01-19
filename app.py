@@ -129,15 +129,16 @@ def get_investor_trend(code):
         return pd.DataFrame(data_list)
     except: return None
 
-# [v1.7 정밀화] 실시간 매크로 데이터 수집 엔진
+# [v1.7] 실시간 매크로 데이터 수집 엔진 (시간대 제거 로직 포함)
 @st.cache_data(ttl=3600)
 def get_macro_data():
     try:
         end = datetime.now()
         start = end - timedelta(days=30)
         tickers = ["^IXIC", "^VIX", "DX-Y.NYB", "^TNX", "GC=F", "NQ=F"]
-        # 멀티인덱스 방지를 위해 별도 처리
         macro = yf.download(tickers, start=start, end=end, progress=False)['Close'].ffill()
+        # [해결] 모든 인덱스의 시간대 정보 강제 제거 (tz-naive로 통일)
+        macro.index = macro.index.tz_localize(None)
         
         last = macro.iloc[-1]
         n_ret = macro["^IXIC"].pct_change().iloc[-1]
@@ -149,13 +150,16 @@ def get_macro_data():
         return n_ret, v_cls, d_ret, t_cls, g_ret, nf_ret
     except: return 0.0, 15.0, 0.0, 4.0, 0.0, 0.0
 
-# [수리 완료] v1.7 65.25% 모델 22개 피처 연산 (str object is not callable 해결)
+# [수리 완료] v1.7 65.25% 모델 22개 피처 실시간 연산
 def calculate_ai_probability(df, market_df):
     try:
         if not os.path.exists("stock_model.pkl"): return 50.0, "모델 파일 미발견", []
         model = joblib.load("stock_model.pkl")
         
-        # 1. 기술적 지표 생성 (v1.7 로직 완벽 재현)
+        # [해결] 주식 데이터 시간대 제거
+        df.index = df.index.tz_localize(None)
+        
+        # 1. 기술적 지표 생성 (22개 피처 완벽 복원)
         df['rsi'] = ta.rsi(df['Close'], length=14)
         bb = ta.bbands(df['Close'], length=20, std=2)
         l_col, u_col = [c for c in bb.columns if 'BBL' in c][0], [c for c in bb.columns if 'BBU' in c][0]
@@ -166,9 +170,10 @@ def calculate_ai_probability(df, market_df):
         df['vol_spike_ratio'] = df['Volume'] / ta.sma(df['Volume'], 20)
         df['candle_body'] = (df['Close'] - df['Open']) / (df['High'] - df['Low'] + 1e-9)
         
-        # [에러 해결 핵심] market_df를 Series로 변환하여 rename 에러 방지
+        # [해결] market_df Series로 변환 및 시간대 제거
         m_series = market_df.squeeze()
         if isinstance(m_series, pd.DataFrame): m_series = m_series.iloc[:, 0]
+        m_series.index = m_series.index.tz_localize(None)
         m_series.name = "market_close"
         
         df = df.join(m_series, how='left').ffill()
@@ -184,12 +189,12 @@ def calculate_ai_probability(df, market_df):
         df['range_roc'] = ta.roc(df['price_range'], length=5) 
         df['day_of_week'] = df.index.dayofweek
         
-        # 2. 매크로 데이터 병합
+        # 2. 실시간 매크로 데이터 병합
         n_ret, v_cls, d_ret, t_cls, g_ret, nf_ret = get_macro_data()
         df['nasdaq_return'], df['vix_close'], df['dxy_return'] = n_ret, v_cls, d_ret
         df['tnx_close'], df['gold_return'], df['nasdaq_f_return'] = t_cls, g_ret, nf_ret
         
-        # 3. 22개 피처 정렬 및 예측
+        # 3. 모델 피처 정렬
         feature_cols = [
             'rsi', 'bb_per', 'ma_diff', 'vol_consecutive_days', 'vol_spike_ratio', 
             'candle_body', 'relative_strength', 'macd_hist', 'mfi', 'atr_ratio',
@@ -203,9 +208,9 @@ def calculate_ai_probability(df, market_df):
         last = df.iloc[-1]
         
         reasons = [
-            {"label": "상대강도 (RS)", "val": f"{round(float(last['relative_strength'])*100, 1)}%", "desc": "시장 주도" if last['relative_strength'] > 0 else "하회"},
             {"label": "나스닥 선물", "val": f"{nf_ret*100:.2f}%", "desc": "호조" if nf_ret > 0 else "불안"},
-            {"label": "에너지 가속도", "val": f"{round(float(last['range_roc']), 1)}%", "desc": "폭발적" if last['range_roc'] > 0 else "수렴"},
+            {"label": "상대강도 (RS)", "val": f"{round(float(last['relative_strength'])*100, 1)}%", "desc": "시장 주도" if last['relative_strength'] > 0 else "하회"},
+            {"label": "에너지 가속도", "val": f"{round(float(last['range_roc']), 1)}%", "desc": "가속화" if last['range_roc'] > 0 else "수렴"},
             {"label": "VIX 공포지수", "val": f"{v_cls:.1f}", "desc": "안정" if v_cls < 18 else "주의"}
         ]
         return round(prob, 1), "v1.7 분석 엔진 정상 작동 중", reasons
@@ -253,14 +258,12 @@ if data is not None:
         with c1:
             try:
                 hist = tk.history(period="6mo")
-                # MultiIndex 수동 플래닝 (최신 yfinance 대응)
                 if isinstance(hist.columns, pd.MultiIndex): hist.columns = hist.columns.get_level_values(0)
-                
                 m_hist = yf.download(market_idx, period="6mo", progress=False)['Close']
                 
                 fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], increasing_line_color='#ff3366', decreasing_line_color='#00e5ff')])
                 
-                # [디자인 완벽 고정] 흰 격자선 흐리게(0.05), 날짜 숫자(01.19), 가격 콤마 표기
+                # [디자인 고정] 날짜 숫자(01.19), 가격 콤마, 흐린 격자선
                 fig.update_layout(
                     template="plotly_dark", height=320, margin=dict(l=0, r=0, t=0, b=0), 
                     paper_bgcolor="#1c2128", plot_bgcolor="#1c2128", xaxis_rangeslider_visible=False,
@@ -292,7 +295,7 @@ if data is not None:
                 st.plotly_chart(draw_finance_chart(debt.index.year, debt.values, "%", is_debt=True), use_container_width=True)
         except: pass
 
-        # [실전 확률 연동] v1.7 65.25% 모델 적용
+        # [실전 적용] v1.7 65.25% 모델 상승 확률 연동
         prob, msg, reasons = calculate_ai_probability(hist, m_hist)
         st.markdown('<div class="section-header" style="margin-top:30px;">🚀 AI PREDICTIVE STRATEGY: 5개년 데이터 모델링 기반 익일 기대수익 확률</div>', unsafe_allow_html=True)
         prob_col, reason_col = st.columns([4, 6])
